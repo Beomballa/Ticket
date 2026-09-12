@@ -1,0 +1,99 @@
+# Fan Event Platform
+
+공연·팬 이벤트 예약과 한정 재고의 동시성, 멱등성, 만료 및 재처리를 검증하는 백엔드 중심 포트폴리오 프로젝트다.
+
+## 기술 기준선
+
+- Java 21, Spring Boot 3.5
+- Spring Data JPA, QueryDSL 5.1
+- PostgreSQL, Redis, Flyway
+- Testcontainers, JUnit 5
+- Actuator, Micrometer
+- Gradle 8.14 Wrapper
+
+JPA는 애그리거트 저장과 상태 변경에 사용하고, QueryDSL은 동적 목록·관리자 조회·집계에 사용한다. Native SQL은 실행 계획과 측정 결과로 필요성이 확인된 경우에만 ADR을 남기고 도입한다.
+
+## 로컬 실행
+
+필수 도구는 JDK 21과 Docker다. 별도 Gradle 설치는 필요하지 않다.
+
+```bash
+./gradlew bootRun
+```
+
+Spring Boot Docker Compose 연동이 `compose.yml`의 PostgreSQL과 Redis를 시작한다. 직접 인프라를 제어하려면 다음처럼 실행할 수 있다.
+
+```bash
+docker compose up -d
+./gradlew bootRun
+```
+
+기본 health endpoint는 `http://localhost:8080/actuator/health`다.
+
+운영 환경에서는 반드시 32바이트 이상의 별도 JWT 서명을 설정한다.
+
+```bash
+export JWT_SECRET='replace-with-a-production-secret-at-least-32-bytes'
+```
+
+인증 API는 `POST /api/auth/signup`, `POST /api/auth/login`이며 로그인 응답의 Access Token을
+`Authorization: Bearer <token>`으로 전달한다. `GET /api/members/me`는 현재 로그인 회원을 확인하고,
+`/api/admin/**`는 `ADMIN` 역할만 접근할 수 있다.
+
+`POST /api/reservations`는 인증된 회원의 재고를 선점하고 10분 동안 유효한 `PENDING` 예약을 만든다.
+요청한 모든 재고 차감과 예약·가격 스냅샷 저장은 하나의 트랜잭션으로 처리되며, 항목 하나라도
+재고가 부족하면 전체 요청이 롤백된다. 고경합 재고 차감은
+`available_quantity >= 요청 수량` 조건을 포함한 단일 UPDATE로 처리해 음수 재고와 읽기-쓰기
+경합을 방지한다.
+
+예약 확정은 `POST /api/reservations/{id}/confirm`, 취소는
+`POST /api/reservations/{id}/cancel`을 사용한다. MVP 모의 결제의 승인 토큰은
+`mock-approved`이며 다른 토큰은 `PAYMENT_DECLINED`로 처리된다. `PENDING` 취소는 재고만 반환하고,
+`CONFIRMED` 취소는 모의 환불 후 재고를 반환한다. 동일 명령을 반복해도 결제·환불·재고 반환을
+다시 실행하지 않는다.
+
+확정되지 않은 `PENDING` 예약은 만료 시각 이후 배치 작업이 `EXPIRED`로 전환하고 재고를
+반환한다. 만료 대상은 `FOR UPDATE SKIP LOCKED`로 최대 50건씩 선점하며 상태 변경과 재고 반환을
+같은 트랜잭션에서 처리한다. 여러 애플리케이션 인스턴스가 동시에 실행하거나 작업이 롤백된 뒤
+재실행되어도 같은 예약의 재고는 한 번만 반환된다.
+
+예약 확정·취소·만료 이벤트는 상태 변경과 같은 트랜잭션에서 Outbox에 저장한다. 폴링
+퍼블리셔는 최대 20건을 `SKIP LOCKED`로 선점하고 30초 처리 임대를 사용한다. 실패 이벤트는
+최대 5회까지 지수 백오프로 재시도하며, 소비자명·이벤트 ID 처리 이력으로 재전달 시 DB 부작용을
+한 번만 적용한다. 현재 테스트 소비자는 예약 이벤트를 감사 로그로 기록한다.
+
+예약 생성과 확정 요청에는 `Idempotency-Key` 헤더가 필수다. 회원·요청 범위·키 조합을 24시간
+유지하며, 같은 키와 같은 요청은 최초 성공 응답을 그대로 재생한다. 같은 키를 다른 요청 본문에
+재사용하면 `409 IDEMPOTENCY_KEY_REUSED`를 반환한다. 실패한 비즈니스 요청은 키까지 함께
+롤백되므로 원인을 해결한 뒤 같은 키로 재시도할 수 있다.
+
+## 검증
+
+```bash
+./gradlew clean test
+```
+
+통합 테스트는 Testcontainers로 PostgreSQL을 시작하고 Flyway 마이그레이션, JPA 초기화와 QueryDSL 설정을 함께 검증한다.
+
+재고 잠금 전략 비교 실험만 다시 실행하려면 다음 명령을 사용한다.
+
+```bash
+./gradlew test --tests '*comparesStockConcurrencyStrategiesWithoutOverselling' --info
+```
+
+## 문서
+
+- [MVP 데이터 모델](docs/architecture/erd.md)
+- [ADR-0001: 모듈형 모놀리스](docs/adr/0001-modular-monolith.md)
+- [ADR-0002: 이벤트 판매 상태 전이](docs/adr/0002-event-lifecycle.md)
+- [ADR-0003: JWT 기반 인증과 역할 인가](docs/adr/0003-jwt-authentication.md)
+- [ADR-0004: 예약 선점 트랜잭션 기준선](docs/adr/0004-reservation-hold-transaction.md)
+- [ADR-0005: 예약 확정·취소와 모의 결제 경계](docs/adr/0005-reservation-payment-boundary.md)
+- [ADR-0006: 예약 생성·확정 멱등키](docs/adr/0006-reservation-idempotency.md)
+- [ADR-0007: 고경합 재고 차감 전략](docs/adr/0007-high-contention-inventory-decrement.md)
+- [ADR-0008: 예약 만료 선점과 재고 반환](docs/adr/0008-reservation-expiration.md)
+- [ADR-0009: Transactional Outbox와 멱등 소비](docs/adr/0009-transactional-outbox.md)
+- [이벤트 목록 조회 기준선](docs/performance/event-list-baseline.md)
+- [재고 잠금 전략 비교 실험](docs/performance/stock-lock-strategy-comparison.md)
+
+세부 요구사항과 단계별 작업 현황은 Notion 프로젝트 문서에서 관리한다.
