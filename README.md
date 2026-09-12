@@ -67,6 +67,12 @@ export JWT_SECRET='replace-with-a-production-secret-at-least-32-bytes'
 재사용하면 `409 IDEMPOTENCY_KEY_REUSED`를 반환한다. 실패한 비즈니스 요청은 키까지 함께
 롤백되므로 원인을 해결한 뒤 같은 키로 재시도할 수 있다.
 
+관리자는 `GET /api/admin/reservations`에서 상태·회원·이벤트·생성 기간으로 예약을 조회하고,
+`GET /api/admin/inventory`에서 이벤트·회차·유형·잔여 수량·품절 여부로 재고를 조회한다.
+두 목록은 QueryDSL DTO Projection을 사용하며 `page`, `size`를 지원한다. 예약은
+`created_at DESC, id DESC`, 재고는 공연 시각과 각 ID의 오름차순으로 정렬 순서를 고정한다.
+`GET /api/admin/reservations/summary`는 상태별 건수와 확정 매출을 한 번의 집계 쿼리로 반환한다.
+
 ## 검증
 
 ```bash
@@ -93,7 +99,9 @@ export JWT_SECRET='replace-with-a-production-secret-at-least-32-bytes'
 - [ADR-0007: 고경합 재고 차감 전략](docs/adr/0007-high-contention-inventory-decrement.md)
 - [ADR-0008: 예약 만료 선점과 재고 반환](docs/adr/0008-reservation-expiration.md)
 - [ADR-0009: Transactional Outbox와 멱등 소비](docs/adr/0009-transactional-outbox.md)
+- [ADR-0010: 관리자 예약·재고 QueryDSL 조회](docs/adr/0010-admin-querydsl-read-model.md)
 - [이벤트 목록 조회 기준선](docs/performance/event-list-baseline.md)
+- [관리자 조회 실행 계획](docs/performance/admin-query-plan.md)
 - [재고 잠금 전략 비교 실험](docs/performance/stock-lock-strategy-comparison.md)
 
 세부 요구사항과 단계별 작업 현황은 Notion 프로젝트 문서에서 관리한다.

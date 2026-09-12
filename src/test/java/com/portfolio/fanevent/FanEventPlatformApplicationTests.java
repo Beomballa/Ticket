@@ -61,6 +61,7 @@ import org.springframework.security.oauth2.jwt.JwtEncoderParameters;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.context.bean.override.mockito.MockitoSpyBean;
 import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.annotation.Transactional;
 import org.springframework.transaction.support.TransactionTemplate;
 import org.testcontainers.containers.GenericContainer;
 import org.testcontainers.containers.PostgreSQLContainer;
@@ -965,6 +966,109 @@ class FanEventPlatformApplicationTests {
 				""", String.class));
 		assertThat(queryPlan)
 				.contains("Planning Time")
+				.contains("Execution Time")
+				.contains("Buffers");
+	}
+
+	@Test
+	@WithMockUser(roles = "ADMIN")
+	void adminReservationAndInventorySearchUseStableProjectionQueries() throws Exception {
+		String email = signupUniqueMember("관리자 조회 회원");
+		String accessToken = login(email, "secure-password");
+		Long memberId = memberRepository.findByEmail(email).orElseThrow().getId();
+		Long inventoryId = createOnSaleInventory(20, new BigDecimal("27000.00"));
+		Long eventId = jdbcTemplate.queryForObject("""
+				SELECT session.event_id
+				FROM sellable_inventory inventory
+				JOIN event_sessions session ON session.id = inventory.event_session_id
+				WHERE inventory.id = ?
+				""", Long.class, inventoryId);
+
+		Long firstReservationId = holdReservation(accessToken, inventoryId, 2);
+		Long secondReservationId = holdReservation(accessToken, inventoryId, 3);
+		confirmReservation(accessToken, firstReservationId);
+
+		SessionFactory sessionFactory = entityManagerFactory.unwrap(SessionFactory.class);
+		sessionFactory.getStatistics().clear();
+		mockMvc.perform(get("/api/admin/reservations")
+				.param("memberId", memberId.toString())
+				.param("eventId", eventId.toString())
+				.param("size", "10"))
+				.andExpect(status().isOk())
+				.andExpect(jsonPath("$.totalElements").value(2))
+				.andExpect(jsonPath("$.content[0].reservationId").value(secondReservationId))
+				.andExpect(jsonPath("$.content[0].totalQuantity").value(3))
+				.andExpect(jsonPath("$.content[1].reservationId").value(firstReservationId))
+				.andExpect(jsonPath("$.content[1].status").value("CONFIRMED"));
+		assertThat(sessionFactory.getStatistics().getPrepareStatementCount()).isEqualTo(2);
+
+		sessionFactory.getStatistics().clear();
+		mockMvc.perform(get("/api/admin/inventory")
+				.param("eventId", eventId.toString())
+				.param("availableQuantityLoe", "15")
+				.param("soldOut", "false"))
+				.andExpect(status().isOk())
+				.andExpect(jsonPath("$.totalElements").value(1))
+				.andExpect(jsonPath("$.content[0].inventoryId").value(inventoryId))
+				.andExpect(jsonPath("$.content[0].availableQuantity").value(15))
+				.andExpect(jsonPath("$.content[0].reservedQuantity").value(5));
+		assertThat(sessionFactory.getStatistics().getPrepareStatementCount()).isEqualTo(2);
+
+		mockMvc.perform(get("/api/admin/reservations/summary"))
+				.andExpect(status().isOk())
+				.andExpect(jsonPath("$.totalReservations").isNumber())
+				.andExpect(jsonPath("$.confirmedSalesAmount").isNumber())
+				.andExpect(jsonPath("$.statusCounts.CONFIRMED").isNumber());
+	}
+
+	@Test
+	@Transactional
+	void adminReservationQueryPlanUsesStatusCreatedIndexOnLargeDataset() throws Exception {
+		String email = signupUniqueMember("실행 계획 회원");
+		Long memberId = memberRepository.findByEmail(email).orElseThrow().getId();
+		Long inventoryId = createOnSaleInventory(10, new BigDecimal("1000.00"));
+
+		jdbcTemplate.update("""
+				INSERT INTO reservations (
+				    member_id, status, total_amount, expires_at, version, created_at, updated_at)
+				SELECT ?,
+				       CASE WHEN sequence_number % 1000 = 0 THEN 'PENDING' ELSE 'CONFIRMED' END,
+				       1000.00,
+				       CURRENT_TIMESTAMP + INTERVAL '1 hour',
+				       0,
+				       CURRENT_TIMESTAMP - (sequence_number || ' milliseconds')::interval,
+				       CURRENT_TIMESTAMP
+				FROM generate_series(1, 10000) sequence_number
+				""", memberId);
+		jdbcTemplate.update("""
+				INSERT INTO reservation_items (
+				    reservation_id, inventory_id, quantity, unit_price, created_at)
+				SELECT reservation.id, ?, 1, 1000.00, CURRENT_TIMESTAMP
+				FROM reservations reservation
+				WHERE reservation.member_id = ? AND reservation.total_amount = 1000.00
+				""", inventoryId, memberId);
+		jdbcTemplate.execute("ANALYZE reservations");
+		jdbcTemplate.execute("ANALYZE reservation_items");
+
+		String queryPlan = String.join("\n", jdbcTemplate.queryForList("""
+				EXPLAIN (ANALYZE, BUFFERS)
+				SELECT reservation.id, member.email, reservation.status,
+				       reservation.total_amount, reservation.expires_at,
+				       reservation.created_at, count(DISTINCT item.id), sum(item.quantity)
+				FROM reservations reservation
+				JOIN members member ON member.id = reservation.member_id
+				JOIN reservation_items item ON item.reservation_id = reservation.id
+				JOIN sellable_inventory inventory ON inventory.id = item.inventory_id
+				JOIN event_sessions session ON session.id = inventory.event_session_id
+				JOIN events event ON event.id = session.event_id
+				WHERE reservation.status = 'PENDING'
+				GROUP BY reservation.id, member.id
+				ORDER BY reservation.created_at DESC, reservation.id DESC
+				LIMIT 20
+				""", String.class));
+
+		assertThat(queryPlan)
+				.contains("idx_reservations_status_created")
 				.contains("Execution Time")
 				.contains("Buffers");
 	}
