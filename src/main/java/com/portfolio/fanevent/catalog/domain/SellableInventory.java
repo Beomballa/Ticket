@@ -117,6 +117,10 @@ public class SellableInventory extends BaseEntity {
         return availableQuantity;
     }
 
+    public Long getEventId() {
+        return eventSession.getEvent().getId();
+    }
+
     private static void validate(InventoryType type, String name, BigDecimal price, int quantity) {
         if (type == null || name == null || name.isBlank() || price == null) {
             throw new IllegalArgumentException("재고 필수값이 누락되었습니다.");

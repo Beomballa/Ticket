@@ -25,17 +25,20 @@ public class CatalogCommandService {
     private final EventRepository eventRepository;
     private final EventSessionRepository eventSessionRepository;
     private final SellableInventoryRepository inventoryRepository;
+    private final PublicEventCacheInvalidator cacheInvalidator;
 
     public CatalogCommandService(
             ArtistRepository artistRepository,
             EventRepository eventRepository,
             EventSessionRepository eventSessionRepository,
-            SellableInventoryRepository inventoryRepository
+            SellableInventoryRepository inventoryRepository,
+            PublicEventCacheInvalidator cacheInvalidator
     ) {
         this.artistRepository = artistRepository;
         this.eventRepository = eventRepository;
         this.eventSessionRepository = eventSessionRepository;
         this.inventoryRepository = inventoryRepository;
+        this.cacheInvalidator = cacheInvalidator;
     }
 
     public Long createArtist(String name, String description) {
@@ -43,9 +46,11 @@ public class CatalogCommandService {
     }
 
     public void updateArtist(Long artistId, String name, String description) {
+        java.util.List<Long> eventIds = eventRepository.findIdsByArtistId(artistId);
         Artist artist = artistRepository.findById(artistId)
                 .orElseThrow(() -> new EntityNotFoundException("아티스트를 찾을 수 없습니다: " + artistId));
         artist.update(name, description);
+        cacheInvalidator.evictAllAfterCommit(eventIds);
     }
 
     public Long createEvent(
@@ -74,12 +79,14 @@ public class CatalogCommandService {
         Event event = eventRepository.findById(eventId)
                 .orElseThrow(() -> new EntityNotFoundException("이벤트를 찾을 수 없습니다: " + eventId));
         event.update(title, description, type, salesStartAt, salesEndAt);
+        cacheInvalidator.evictAfterCommit(eventId);
     }
 
     public void changeEventStatus(Long eventId, EventStatus targetStatus) {
         Event event = eventRepository.findById(eventId)
                 .orElseThrow(() -> new EntityNotFoundException("이벤트를 찾을 수 없습니다: " + eventId));
         event.changeStatus(targetStatus);
+        cacheInvalidator.evictAfterCommit(eventId);
     }
 
     public Long createSession(
@@ -94,7 +101,9 @@ public class CatalogCommandService {
                 .orElseThrow(() -> new EntityNotFoundException("이벤트를 찾을 수 없습니다: " + eventId));
         EventSession session = EventSession.create(
                 event, name, venue, startsAt, salesStartAt, salesEndAt);
-        return eventSessionRepository.save(session).getId();
+        Long sessionId = eventSessionRepository.save(session).getId();
+        cacheInvalidator.evictAfterCommit(eventId);
+        return sessionId;
     }
 
     public void updateSession(
@@ -108,6 +117,7 @@ public class CatalogCommandService {
         EventSession session = eventSessionRepository.findById(sessionId)
                 .orElseThrow(() -> new EntityNotFoundException("회차를 찾을 수 없습니다: " + sessionId));
         session.update(name, venue, startsAt, salesStartAt, salesEndAt);
+        cacheInvalidator.evictAfterCommit(session.getEvent().getId());
     }
 
     public Long createInventory(
@@ -120,7 +130,9 @@ public class CatalogCommandService {
         EventSession session = eventSessionRepository.findById(sessionId)
                 .orElseThrow(() -> new EntityNotFoundException("회차를 찾을 수 없습니다: " + sessionId));
         SellableInventory inventory = SellableInventory.create(session, type, name, price, quantity);
-        return inventoryRepository.save(inventory).getId();
+        Long inventoryId = inventoryRepository.save(inventory).getId();
+        cacheInvalidator.evictAfterCommit(session.getEvent().getId());
+        return inventoryId;
     }
 
     public void updateInventory(
@@ -133,5 +145,6 @@ public class CatalogCommandService {
         SellableInventory inventory = inventoryRepository.findById(inventoryId)
                 .orElseThrow(() -> new EntityNotFoundException("재고를 찾을 수 없습니다: " + inventoryId));
         inventory.update(type, name, price, quantity);
+        cacheInvalidator.evictAfterCommit(inventory.getEventId());
     }
 }

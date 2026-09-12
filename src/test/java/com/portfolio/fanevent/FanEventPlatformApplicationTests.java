@@ -13,6 +13,7 @@ import static org.springframework.test.web.servlet.request.MockMvcRequestBuilder
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.put;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.header;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -52,6 +53,7 @@ import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMock
 import org.springframework.boot.testcontainers.service.connection.ServiceConnection;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.security.test.context.support.WithMockUser;
+import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.security.oauth2.jose.jws.MacAlgorithm;
 import org.springframework.security.oauth2.jwt.JwsHeader;
@@ -100,6 +102,9 @@ class FanEventPlatformApplicationTests {
 
 	@Autowired
 	private ObjectMapper objectMapper;
+
+	@Autowired
+	private StringRedisTemplate redisTemplate;
 
 	@Autowired
 	private CatalogCommandService catalogCommandService;
@@ -1032,7 +1037,7 @@ class FanEventPlatformApplicationTests {
 				INSERT INTO reservations (
 				    member_id, status, total_amount, expires_at, version, created_at, updated_at)
 				SELECT ?,
-				       CASE WHEN sequence_number % 1000 = 0 THEN 'PENDING' ELSE 'CONFIRMED' END,
+				       CASE WHEN sequence_number % 1000 = 0 THEN 'FAILED' ELSE 'CONFIRMED' END,
 				       1000.00,
 				       CURRENT_TIMESTAMP + INTERVAL '1 hour',
 				       0,
@@ -1061,7 +1066,7 @@ class FanEventPlatformApplicationTests {
 				JOIN sellable_inventory inventory ON inventory.id = item.inventory_id
 				JOIN event_sessions session ON session.id = inventory.event_session_id
 				JOIN events event ON event.id = session.event_id
-				WHERE reservation.status = 'PENDING'
+				WHERE reservation.status = 'FAILED'
 				GROUP BY reservation.id, member.id
 				ORDER BY reservation.created_at DESC, reservation.id DESC
 				LIMIT 20
@@ -1175,6 +1180,92 @@ class FanEventPlatformApplicationTests {
 				.contains("ROW(created_at, id) <")
 				.contains("Execution Time")
 				.contains("Buffers");
+	}
+
+	@Test
+	@WithMockUser(roles = "ADMIN")
+	void publicEventDetailCacheHitsAndInvalidatesAfterCommit() throws Exception {
+		String unique = UUID.randomUUID().toString();
+		Instant now = Instant.now().truncatedTo(ChronoUnit.MILLIS);
+		Long artistId = catalogCommandService.createArtist("캐시 아티스트 " + unique, "캐시 테스트");
+		Long eventId = catalogCommandService.createEvent(
+				artistId,
+				"캐시 전 제목",
+				"캐시 테스트",
+				EventType.CONCERT,
+				now.minus(1, ChronoUnit.DAYS),
+				now.plus(30, ChronoUnit.DAYS));
+		Long sessionId = catalogCommandService.createSession(
+				eventId,
+				"캐시 회차",
+				"SEOUL",
+				now.plus(40, ChronoUnit.DAYS),
+				now.minus(1, ChronoUnit.DAYS),
+				now.plus(30, ChronoUnit.DAYS));
+		catalogCommandService.createInventory(
+				sessionId,
+				InventoryType.GENERAL_ADMISSION,
+				"캐시 좌석",
+				new BigDecimal("33000.00"),
+				100);
+		catalogCommandService.changeEventStatus(eventId, EventStatus.PUBLISHED);
+
+		SessionFactory sessionFactory = entityManagerFactory.unwrap(SessionFactory.class);
+		sessionFactory.getStatistics().clear();
+		mockMvc.perform(get("/api/events/{eventId}", eventId))
+				.andExpect(status().isOk())
+				.andExpect(jsonPath("$.title").value("캐시 전 제목"));
+		assertThat(sessionFactory.getStatistics().getPrepareStatementCount()).isEqualTo(2);
+		assertThat(redisTemplate.getExpire("cache:event-detail:v1:" + eventId, TimeUnit.SECONDS))
+				.isBetween(1L, 300L);
+
+		sessionFactory.getStatistics().clear();
+		mockMvc.perform(get("/api/events/{eventId}", eventId))
+				.andExpect(status().isOk())
+				.andExpect(jsonPath("$.title").value("캐시 전 제목"));
+		assertThat(sessionFactory.getStatistics().getPrepareStatementCount()).isZero();
+
+		catalogCommandService.updateEvent(
+				eventId,
+				"캐시 무효화 후 제목",
+				"캐시 테스트",
+				EventType.CONCERT,
+				now.minus(1, ChronoUnit.DAYS),
+				now.plus(30, ChronoUnit.DAYS));
+		assertThat(redisTemplate.hasKey("cache:event-detail:v1:" + eventId)).isFalse();
+		sessionFactory.getStatistics().clear();
+		mockMvc.perform(get("/api/events/{eventId}", eventId))
+				.andExpect(status().isOk())
+				.andExpect(jsonPath("$.title").value("캐시 무효화 후 제목"));
+		assertThat(sessionFactory.getStatistics().getPrepareStatementCount()).isEqualTo(2);
+	}
+
+	@Test
+	void reservationHoldRateLimitReturns429WithRetryAfter() throws Exception {
+		String email = signupUniqueMember("속도 제한 회원");
+		String accessToken = login(email, "secure-password");
+		Long inventoryId = createOnSaleInventory(30, new BigDecimal("12000.00"));
+
+		for (int request = 0; request < 20; request++) {
+			mockMvc.perform(post("/api/reservations")
+					.header("Authorization", "Bearer " + accessToken)
+					.header("Idempotency-Key", UUID.randomUUID().toString())
+					.contentType(APPLICATION_JSON)
+					.content(reservationRequest(inventoryId, 1)))
+					.andExpect(status().isCreated());
+		}
+
+		mockMvc.perform(post("/api/reservations")
+				.header("Authorization", "Bearer " + accessToken)
+				.header("Idempotency-Key", UUID.randomUUID().toString())
+				.contentType(APPLICATION_JSON)
+				.content(reservationRequest(inventoryId, 1)))
+				.andExpect(status().isTooManyRequests())
+				.andExpect(header().exists("Retry-After"))
+				.andExpect(jsonPath("$.code").value("RESERVATION_RATE_LIMITED"));
+
+		assertThat(inventoryQuantity(inventoryId)).isEqualTo(10);
+		assertThat(reservationCountForInventory(inventoryId)).isEqualTo(20);
 	}
 
 	private Long responseId(String responseBody) throws Exception {

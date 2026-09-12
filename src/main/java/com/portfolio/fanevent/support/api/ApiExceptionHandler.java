@@ -6,6 +6,7 @@ import com.portfolio.fanevent.idempotency.application.IdempotencyInProgressExcep
 import com.portfolio.fanevent.member.application.DuplicateEmailException;
 import com.portfolio.fanevent.member.application.InvalidCredentialsException;
 import com.portfolio.fanevent.payment.application.PaymentDeclinedException;
+import com.portfolio.fanevent.reservation.application.RateLimitExceededException;
 import jakarta.persistence.EntityNotFoundException;
 import java.util.List;
 import org.slf4j.MDC;
@@ -18,6 +19,17 @@ import org.springframework.web.bind.annotation.RestControllerAdvice;
 
 @RestControllerAdvice
 public class ApiExceptionHandler {
+
+    @ExceptionHandler(RateLimitExceededException.class)
+    ResponseEntity<ApiError> handleRateLimitExceeded(RateLimitExceededException exception) {
+        return ResponseEntity.status(HttpStatus.TOO_MANY_REQUESTS)
+                .header("Retry-After", Long.toString(exception.getRetryAfterSeconds()))
+                .body(new ApiError(
+                        "RESERVATION_RATE_LIMITED",
+                        exception.getMessage(),
+                        MDC.get("traceId"),
+                        List.of()));
+    }
 
     @ExceptionHandler(IdempotencyConflictException.class)
     ResponseEntity<ApiError> handleIdempotencyConflict(IdempotencyConflictException exception) {

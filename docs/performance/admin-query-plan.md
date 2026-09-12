@@ -5,8 +5,8 @@
 - API: `GET /api/admin/reservations`, `GET /api/admin/inventory`
 - 환경: PostgreSQL 16 Testcontainers
 - 데이터: 동일 회원 예약 10,000건과 예약 항목 10,000건
-- 예약 상태 분포: `CONFIRMED` 9,990건, `PENDING` 10건
-- 쿼리: `PENDING` 필터, 생성 시각·ID 역순, 20건 제한, 항목 수·수량 집계
+- 예약 상태 분포: `CONFIRMED` 9,990건, `FAILED` 10건
+- 쿼리: `FAILED` 필터, 생성 시각·ID 역순, 20건 제한, 항목 수·수량 집계
 
 ## 적용 인덱스
 
@@ -23,7 +23,7 @@ CREATE INDEX idx_reservation_items_inventory_reservation
 
 ## 결과
 
-`EXPLAIN (ANALYZE, BUFFERS)`에서 희소한 `PENDING` 조건은
+`EXPLAIN (ANALYZE, BUFFERS)`에서 희소한 `FAILED` 조건은
 `idx_reservations_status_created`를 사용한다. 결과는 그룹 집계 뒤
 `created_at DESC, id DESC` 순으로 제한된다. 테스트는 실행 계획에 인덱스명, 실제 실행 시간과
 버퍼 정보가 모두 포함되는지 검증한다.

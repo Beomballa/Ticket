@@ -76,6 +76,12 @@ export JWT_SECRET='replace-with-a-production-secret-at-least-32-bytes'
 응답의 `nextCursor`를 다음 요청의 `cursor`로 전달한다. 커서는 `(created_at, id)` 경계를 담은
 불투명 문자열이며 전체 건수 count 없이 페이지당 SQL 1회만 실행한다.
 
+공개 이벤트 상세는 Redis Cache-Aside로 5분간 저장한다. 이벤트·아티스트·회차·재고 변경은 DB
+커밋 이후 관련 키를 무효화한다. Redis 조회·저장 장애는 DB 원본 응답으로 우회한다. 예약 생성은
+회원별 1분 20회 fixed-window 제한을 적용하며 초과 시 `429 RESERVATION_RATE_LIMITED`와
+`Retry-After`를 반환한다. Redis 장애 때 속도 제한은 fail-open으로 동작해 예약 원본 기능을
+유지한다.
+
 ## 검증
 
 ```bash
@@ -104,6 +110,7 @@ export JWT_SECRET='replace-with-a-production-secret-at-least-32-bytes'
 - [ADR-0009: Transactional Outbox와 멱등 소비](docs/adr/0009-transactional-outbox.md)
 - [ADR-0010: 관리자 예약·재고 QueryDSL 조회](docs/adr/0010-admin-querydsl-read-model.md)
 - [ADR-0011: 예약 커서 페이지네이션](docs/adr/0011-reservation-cursor-pagination.md)
+- [ADR-0012: Redis Cache-Aside와 예약 속도 제한](docs/adr/0012-redis-cache-rate-limit.md)
 - [이벤트 목록 조회 기준선](docs/performance/event-list-baseline.md)
 - [관리자 조회 실행 계획](docs/performance/admin-query-plan.md)
 - [offset과 커서 페이지네이션 비교](docs/performance/reservation-pagination-comparison.md)

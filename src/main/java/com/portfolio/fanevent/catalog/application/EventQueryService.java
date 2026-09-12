@@ -11,9 +11,11 @@ import org.springframework.transaction.annotation.Transactional;
 public class EventQueryService {
 
     private final EventQueryRepository eventQueryRepository;
+    private final PublicEventCache publicEventCache;
 
-    public EventQueryService(EventQueryRepository eventQueryRepository) {
+    public EventQueryService(EventQueryRepository eventQueryRepository, PublicEventCache publicEventCache) {
         this.eventQueryRepository = eventQueryRepository;
+        this.publicEventCache = publicEventCache;
     }
 
     public Page<EventSummary> search(EventSearchCondition condition, Pageable pageable) {
@@ -21,8 +23,14 @@ public class EventQueryService {
     }
 
     public EventDetail getPublicDetail(Long eventId) {
-        return eventQueryRepository.findPublicDetail(eventId)
+        return publicEventCache.get(eventId).orElseGet(() -> loadAndCache(eventId));
+    }
+
+    private EventDetail loadAndCache(Long eventId) {
+        EventDetail detail = eventQueryRepository.findPublicDetail(eventId)
                 .orElseThrow(() -> new jakarta.persistence.EntityNotFoundException(
                         "공개 이벤트를 찾을 수 없습니다: " + eventId));
+        publicEventCache.put(eventId, detail);
+        return detail;
     }
 }

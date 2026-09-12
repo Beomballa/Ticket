@@ -2,6 +2,7 @@ package com.portfolio.fanevent.reservation.api;
 
 import com.portfolio.fanevent.reservation.application.ReservationCommandService;
 import com.portfolio.fanevent.reservation.application.ReservationItemCommand;
+import com.portfolio.fanevent.reservation.application.ReservationRateLimiter;
 import com.portfolio.fanevent.reservation.application.ReservationResult;
 import jakarta.validation.Valid;
 import org.springframework.http.HttpStatus;
@@ -20,9 +21,14 @@ import org.springframework.web.bind.annotation.RestController;
 public class ReservationController {
 
     private final ReservationCommandService reservationCommandService;
+    private final ReservationRateLimiter reservationRateLimiter;
 
-    public ReservationController(ReservationCommandService reservationCommandService) {
+    public ReservationController(
+            ReservationCommandService reservationCommandService,
+            ReservationRateLimiter reservationRateLimiter
+    ) {
         this.reservationCommandService = reservationCommandService;
+        this.reservationRateLimiter = reservationRateLimiter;
     }
 
     @PostMapping
@@ -32,8 +38,10 @@ public class ReservationController {
             @RequestHeader("Idempotency-Key") String idempotencyKey,
             @Valid @RequestBody CreateReservationRequest request
     ) {
+        Long memberId = Long.valueOf(jwt.getSubject());
+        reservationRateLimiter.check(memberId);
         return reservationCommandService.hold(
-                Long.valueOf(jwt.getSubject()),
+                memberId,
                 request.items().stream()
                         .map(item -> new ReservationItemCommand(item.inventoryId(), item.quantity()))
                         .toList(),
