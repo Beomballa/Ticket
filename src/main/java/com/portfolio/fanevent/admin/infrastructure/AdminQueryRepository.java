@@ -11,12 +11,15 @@ import com.portfolio.fanevent.admin.application.AdminInventorySearchCondition;
 import com.portfolio.fanevent.admin.application.AdminInventorySummary;
 import com.portfolio.fanevent.admin.application.AdminReservationSearchCondition;
 import com.portfolio.fanevent.admin.application.AdminReservationSummary;
+import com.portfolio.fanevent.admin.application.ReservationCursor;
 import com.portfolio.fanevent.admin.application.ReservationOperationsSummary;
 import com.portfolio.fanevent.catalog.domain.InventoryType;
 import com.portfolio.fanevent.reservation.domain.ReservationStatus;
 import com.querydsl.core.Tuple;
+import com.querydsl.core.BooleanBuilder;
 import com.querydsl.core.types.Projections;
 import com.querydsl.core.types.dsl.BooleanExpression;
+import com.querydsl.core.types.dsl.Expressions;
 import com.querydsl.jpa.impl.JPAQueryFactory;
 import java.math.BigDecimal;
 import java.time.Instant;
@@ -125,6 +128,43 @@ public class AdminQueryRepository {
         return new PageImpl<>(content, pageable, total == null ? 0 : total);
     }
 
+    public List<AdminReservationSummary> searchReservationsByCursor(
+            AdminReservationSearchCondition condition,
+            ReservationCursor cursor,
+            int limit
+    ) {
+        return queryFactory
+                .select(Projections.constructor(
+                        AdminReservationSummary.class,
+                        reservation.id,
+                        member.id,
+                        member.email,
+                        reservation.status,
+                        reservation.totalAmount,
+                        reservation.expiresAt,
+                        reservation.createdAt,
+                        reservationItem.id.countDistinct(),
+                        reservationItem.quantity.sum()))
+                .from(reservation)
+                .join(reservation.member, member)
+                .join(reservation.items, reservationItem)
+                .join(reservationItem.inventory, sellableInventory)
+                .join(sellableInventory.eventSession, eventSession)
+                .join(eventSession.event, event)
+                .where(reservationCursorPredicate(condition, cursor))
+                .groupBy(
+                        reservation.id,
+                        member.id,
+                        member.email,
+                        reservation.status,
+                        reservation.totalAmount,
+                        reservation.expiresAt,
+                        reservation.createdAt)
+                .orderBy(reservation.createdAt.desc(), reservation.id.desc())
+                .limit(limit)
+                .fetch();
+    }
+
     public ReservationOperationsSummary getReservationOperationsSummary() {
         List<Tuple> rows = queryFactory
                 .select(reservation.status, reservation.count(), reservation.totalAmount.sum())
@@ -163,6 +203,20 @@ public class AdminQueryRepository {
         };
     }
 
+    private BooleanBuilder reservationCursorPredicate(
+            AdminReservationSearchCondition condition,
+            ReservationCursor cursor
+    ) {
+        BooleanBuilder predicate = new BooleanBuilder();
+        for (BooleanExpression expression : reservationPredicates(condition)) {
+            if (expression != null) {
+                predicate.and(expression);
+            }
+        }
+        predicate.and(reservationAfterCursor(cursor));
+        return predicate;
+    }
+
     private BooleanExpression[] inventoryPredicates(AdminInventorySearchCondition condition) {
         return new BooleanExpression[] {
                 inventoryEventIdEq(condition.eventId()),
@@ -191,6 +245,18 @@ public class AdminQueryRepository {
 
     private BooleanExpression reservationCreatedAtLoe(Instant createdTo) {
         return createdTo == null ? null : reservation.createdAt.loe(createdTo);
+    }
+
+    private BooleanExpression reservationAfterCursor(ReservationCursor cursor) {
+        if (cursor == null) {
+            return null;
+        }
+        return Expressions.booleanTemplate(
+                "({0}, {1}) < ({2}, {3})",
+                reservation.createdAt,
+                reservation.id,
+                cursor.createdAt(),
+                cursor.reservationId());
     }
 
     private BooleanExpression inventoryEventIdEq(Long eventId) {

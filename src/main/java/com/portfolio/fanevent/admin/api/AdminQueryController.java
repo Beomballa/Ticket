@@ -5,6 +5,7 @@ import com.portfolio.fanevent.admin.application.AdminInventorySummary;
 import com.portfolio.fanevent.admin.application.AdminQueryService;
 import com.portfolio.fanevent.admin.application.AdminReservationSearchCondition;
 import com.portfolio.fanevent.admin.application.AdminReservationSummary;
+import com.portfolio.fanevent.admin.application.CursorPage;
 import com.portfolio.fanevent.admin.application.ReservationOperationsSummary;
 import com.portfolio.fanevent.catalog.domain.InventoryType;
 import com.portfolio.fanevent.reservation.domain.ReservationStatus;
@@ -60,6 +61,24 @@ public class AdminQueryController {
                         eventId, eventSessionId, type, availableQuantityLoe, soldOut),
                 pageable);
         return PageResponse.from(page);
+    }
+
+    @GetMapping("/reservations/cursor")
+    public CursorPage<AdminReservationSummary> searchReservationsByCursor(
+            @RequestParam(required = false) ReservationStatus status,
+            @RequestParam(required = false) Long memberId,
+            @RequestParam(required = false) Long eventId,
+            @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE_TIME)
+            Instant createdFrom,
+            @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE_TIME)
+            Instant createdTo,
+            @RequestParam(required = false) String cursor,
+            @RequestParam(defaultValue = "20") int size
+    ) {
+        return adminQueryService.searchReservationsByCursor(
+                new AdminReservationSearchCondition(status, memberId, eventId, createdFrom, createdTo),
+                cursor,
+                size);
     }
 
     @GetMapping("/reservations/summary")

@@ -1073,6 +1073,110 @@ class FanEventPlatformApplicationTests {
 				.contains("Buffers");
 	}
 
+	@Test
+	@WithMockUser(roles = "ADMIN")
+	void adminReservationCursorPaginationHasNoDuplicatesAndUsesOneQueryPerPage() throws Exception {
+		String email = signupUniqueMember("커서 조회 회원");
+		String accessToken = login(email, "secure-password");
+		Long memberId = memberRepository.findByEmail(email).orElseThrow().getId();
+		Long inventoryId = createOnSaleInventory(10, new BigDecimal("19000.00"));
+		Long firstId = holdReservation(accessToken, inventoryId, 1);
+		Long secondId = holdReservation(accessToken, inventoryId, 1);
+		Long thirdId = holdReservation(accessToken, inventoryId, 1);
+
+		SessionFactory sessionFactory = entityManagerFactory.unwrap(SessionFactory.class);
+		sessionFactory.getStatistics().clear();
+		String firstPageBody = mockMvc.perform(get("/api/admin/reservations/cursor")
+				.param("memberId", memberId.toString())
+				.param("size", "2"))
+				.andExpect(status().isOk())
+				.andExpect(jsonPath("$.hasNext").value(true))
+				.andExpect(jsonPath("$.nextCursor").isNotEmpty())
+				.andExpect(jsonPath("$.content[0].reservationId").value(thirdId))
+				.andExpect(jsonPath("$.content[1].reservationId").value(secondId))
+				.andReturn().getResponse().getContentAsString();
+		assertThat(sessionFactory.getStatistics().getPrepareStatementCount()).isEqualTo(1);
+
+		String nextCursor = objectMapper.readTree(firstPageBody).get("nextCursor").asText();
+		sessionFactory.getStatistics().clear();
+		mockMvc.perform(get("/api/admin/reservations/cursor")
+				.param("memberId", memberId.toString())
+				.param("size", "2")
+				.param("cursor", nextCursor))
+				.andExpect(status().isOk())
+				.andExpect(jsonPath("$.hasNext").value(false))
+				.andExpect(jsonPath("$.nextCursor").doesNotExist())
+				.andExpect(jsonPath("$.content.length()").value(1))
+				.andExpect(jsonPath("$.content[0].reservationId").value(firstId));
+		assertThat(sessionFactory.getStatistics().getPrepareStatementCount()).isEqualTo(1);
+
+		mockMvc.perform(get("/api/admin/reservations/cursor")
+				.param("cursor", "invalid-cursor"))
+				.andExpect(status().isBadRequest())
+				.andExpect(jsonPath("$.code").value("INVALID_REQUEST"));
+	}
+
+	@Test
+	@Transactional
+	void comparesDeepOffsetAndCursorPaginationOnSameDataset() throws Exception {
+		String email = signupUniqueMember("커서 성능 회원");
+		Long memberId = memberRepository.findByEmail(email).orElseThrow().getId();
+		jdbcTemplate.update("""
+				INSERT INTO reservations (
+				    member_id, status, total_amount, expires_at, version, created_at, updated_at)
+				SELECT ?, 'CONFIRMED', 1000.00,
+				       CURRENT_TIMESTAMP + INTERVAL '1 hour', 0,
+				       CURRENT_TIMESTAMP - (sequence_number || ' milliseconds')::interval,
+				       CURRENT_TIMESTAMP
+				FROM generate_series(1, 50000) sequence_number
+				""", memberId);
+		jdbcTemplate.execute("ANALYZE reservations");
+
+		CursorPaginationExperiment.Comparison result =
+				new CursorPaginationExperiment(jdbcTemplate).run(memberId);
+		System.out.printf(
+				"CURSOR_BENCHMARK offset[p50=%.3fms,p95=%.3fms,p99=%.3fms] "
+						+ "cursor[p50=%.3fms,p95=%.3fms,p99=%.3fms]%n",
+				result.offset().p50Millis(),
+				result.offset().p95Millis(),
+				result.offset().p99Millis(),
+				result.cursor().p50Millis(),
+				result.cursor().p95Millis(),
+				result.cursor().p99Millis());
+
+		assertThat(result.cursor().p50Millis()).isLessThan(result.offset().p50Millis());
+		assertThat(result.cursor().p95Millis()).isLessThan(result.offset().p95Millis());
+		assertThat(result.cursor().p99Millis()).isLessThan(result.offset().p99Millis());
+
+		Map<String, Object> boundary = jdbcTemplate.queryForMap("""
+				SELECT created_at, id FROM reservations
+				WHERE member_id = ? AND status = 'CONFIRMED'
+				ORDER BY created_at DESC, id DESC OFFSET 49000 LIMIT 1
+				""", memberId);
+		String offsetPlan = String.join("\n", jdbcTemplate.queryForList("""
+				EXPLAIN (ANALYZE, BUFFERS)
+				SELECT id, created_at FROM reservations
+				WHERE member_id = ? AND status = 'CONFIRMED'
+				ORDER BY created_at DESC, id DESC OFFSET 49000 LIMIT 20
+				""", String.class, memberId));
+		String cursorPlan = String.join("\n", jdbcTemplate.queryForList("""
+				EXPLAIN (ANALYZE, BUFFERS)
+				SELECT id, created_at FROM reservations
+				WHERE member_id = ? AND status = 'CONFIRMED'
+				  AND (created_at, id) < (?, ?)
+				ORDER BY created_at DESC, id DESC LIMIT 20
+				""", String.class,
+				memberId,
+				boundary.get("created_at"),
+				boundary.get("id")));
+		assertThat(offsetPlan).contains("Index Scan").contains("Execution Time").contains("Buffers");
+		assertThat(cursorPlan)
+				.contains("idx_reservations_member_created")
+				.contains("ROW(created_at, id) <")
+				.contains("Execution Time")
+				.contains("Buffers");
+	}
+
 	private Long responseId(String responseBody) throws Exception {
 		return objectMapper.readTree(responseBody).get("id").asLong();
 	}
