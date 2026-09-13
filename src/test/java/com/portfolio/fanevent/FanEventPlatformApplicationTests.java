@@ -19,6 +19,8 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import static org.hamcrest.Matchers.containsString;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.portfolio.fanevent.admin.application.AdminOutboxService;
+import com.portfolio.fanevent.admin.application.OutboxManualRetryRejectedException;
 import com.portfolio.fanevent.catalog.application.CatalogCommandService;
 import com.portfolio.fanevent.catalog.domain.EventStatus;
 import com.portfolio.fanevent.catalog.domain.EventType;
@@ -134,6 +136,9 @@ class FanEventPlatformApplicationTests {
 
 	@Autowired
 	private OutboxPublisher outboxPublisher;
+
+	@Autowired
+	private AdminOutboxService adminOutboxService;
 
 	@MockitoSpyBean
 	private PaymentGateway paymentGateway;
@@ -565,6 +570,109 @@ class FanEventPlatformApplicationTests {
 		assertThat(auditCount(reservationId)).isEqualTo(1);
 		assertThat(consumptionCount(eventId)).isEqualTo(1);
 		assertThat(outboxStatus(eventId)).isEqualTo("PUBLISHED");
+	}
+
+	@Test
+	@WithMockUser(username = "admin-test", roles = "ADMIN")
+	void adminSearchesAndSafelyRetriesExhaustedOutboxFailure() throws Exception {
+		markExistingOutboxPublished();
+		String accessToken = login(signupUniqueMember("Outbox 관리자 재처리 회원"), "secure-password");
+		Long inventoryId = createOnSaleInventory(3, new BigDecimal("24500.00"));
+		Long reservationId = holdReservation(accessToken, inventoryId, 1);
+		confirmReservation(accessToken, reservationId);
+		UUID eventId = outboxEventId(reservationId, "RESERVATION_CONFIRMED");
+		jdbcTemplate.update("""
+				UPDATE outbox_events
+				SET status = 'FAILED', attempts = 5,
+				    last_error = 'broker unavailable',
+				    available_at = CURRENT_TIMESTAMP - INTERVAL '1 minute'
+				WHERE id = ?
+				""", eventId);
+
+		SessionFactory sessionFactory = entityManagerFactory.unwrap(SessionFactory.class);
+		sessionFactory.getStatistics().clear();
+		mockMvc.perform(get("/api/admin/outbox-events")
+				.param("status", "FAILED")
+				.param("eventType", "RESERVATION_CONFIRMED")
+				.param("aggregateId", reservationId.toString())
+				.param("attemptsGoe", "5"))
+				.andExpect(status().isOk())
+				.andExpect(jsonPath("$.totalElements").value(1))
+				.andExpect(jsonPath("$.content[0].eventId").value(eventId.toString()))
+				.andExpect(jsonPath("$.content[0].attempts").value(5))
+				.andExpect(jsonPath("$.content[0].lastError").value("broker unavailable"));
+		assertThat(sessionFactory.getStatistics().getPrepareStatementCount()).isEqualTo(2);
+		mockMvc.perform(get("/api/admin/outbox-events/exhausted"))
+				.andExpect(status().isOk())
+				.andExpect(jsonPath("$.totalElements").value(1))
+				.andExpect(jsonPath("$.content[0].eventId").value(eventId.toString()));
+
+		mockMvc.perform(post("/api/admin/outbox-events/{eventId}/retry", eventId))
+				.andExpect(status().isAccepted())
+				.andExpect(jsonPath("$.eventId").value(eventId.toString()))
+				.andExpect(jsonPath("$.status").value("PENDING"))
+				.andExpect(jsonPath("$.previousAttempts").value(5));
+
+		Map<String, Object> reset = jdbcTemplate.queryForMap("""
+				SELECT status, attempts, last_error
+				FROM outbox_events
+				WHERE id = ?
+				""", eventId);
+		assertThat(reset.get("status")).isEqualTo("PENDING");
+		assertThat(reset.get("attempts")).isEqualTo(0);
+		assertThat(reset.get("last_error")).isNull();
+		assertThat(jdbcTemplate.queryForObject("""
+				SELECT count(*) FROM audit_logs
+				WHERE action = 'OUTBOX_MANUAL_RETRY' AND target_id = ?
+				""", Integer.class, eventId.toString())).isEqualTo(1);
+
+		mockMvc.perform(post("/api/admin/outbox-events/{eventId}/retry", eventId))
+				.andExpect(status().isConflict())
+				.andExpect(jsonPath("$.code").value("OUTBOX_RETRY_REJECTED"));
+		mockMvc.perform(get("/actuator/prometheus"))
+				.andExpect(content().string(containsString("fan_event_outbox_manual_retry_total")));
+	}
+
+	@Test
+	void concurrentOutboxManualRetryAcceptsOnlyOneRequest() throws Exception {
+		markExistingOutboxPublished();
+		String accessToken = login(signupUniqueMember("Outbox 동시 재처리 회원"), "secure-password");
+		Long inventoryId = createOnSaleInventory(3, new BigDecimal("24600.00"));
+		Long reservationId = holdReservation(accessToken, inventoryId, 1);
+		confirmReservation(accessToken, reservationId);
+		UUID eventId = outboxEventId(reservationId, "RESERVATION_CONFIRMED");
+		jdbcTemplate.update("""
+				UPDATE outbox_events
+				SET status = 'FAILED', attempts = 5,
+				    last_error = 'broker unavailable'
+				WHERE id = ?
+				""", eventId);
+		ExecutorService executor = Executors.newFixedThreadPool(2);
+		CountDownLatch start = new CountDownLatch(1);
+
+		try {
+			List<Future<Boolean>> results = List.of(
+					executor.submit(() -> retryOutboxAfter(start, eventId)),
+					executor.submit(() -> retryOutboxAfter(start, eventId)));
+			start.countDown();
+			int accepted = 0;
+			for (Future<Boolean> result : results) {
+				if (result.get(10, TimeUnit.SECONDS)) {
+					accepted++;
+				}
+			}
+			assertThat(accepted).isEqualTo(1);
+		} finally {
+			executor.shutdownNow();
+		}
+
+		assertThat(jdbcTemplate.queryForObject(
+				"SELECT status FROM outbox_events WHERE id = ?", String.class, eventId))
+				.isEqualTo("PENDING");
+		assertThat(jdbcTemplate.queryForObject("""
+				SELECT count(*) FROM audit_logs
+				WHERE action = 'OUTBOX_MANUAL_RETRY' AND target_id = ?
+				""", Integer.class, eventId.toString())).isEqualTo(1);
 	}
 
 	@Test
@@ -1404,6 +1512,16 @@ class FanEventPlatformApplicationTests {
 				.contentType(APPLICATION_JSON)
 				.content(objectMapper.writeValueAsString(Map.of("paymentToken", "mock-approved"))))
 				.andExpect(status().isOk());
+	}
+
+	private boolean retryOutboxAfter(CountDownLatch start, UUID eventId) throws InterruptedException {
+		start.await();
+		try {
+			adminOutboxService.retryExhaustedFailure(eventId, "admin-test");
+			return true;
+		} catch (OutboxManualRetryRejectedException ignored) {
+			return false;
+		}
 	}
 
 	private String reservationRequest(Long inventoryId, int quantity) throws Exception {

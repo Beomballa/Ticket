@@ -7,6 +7,7 @@ import type {
   InventorySummary,
   MemberProfile,
   OperationsSummary,
+  OutboxEventSummary,
   ReservationResult,
   ReservationStatus,
   ReservationSummary,
@@ -324,6 +325,7 @@ function AdminConsole({ member, onLogin }: { member: MemberProfile | null; onLog
   const [summary, setSummary] = useState<OperationsSummary | null>(null)
   const [reservations, setReservations] = useState<ReservationSummary[]>([])
   const [inventory, setInventory] = useState<InventorySummary[]>([])
+  const [outbox, setOutbox] = useState<OutboxEventSummary[]>([])
   const [reservationStatus, setReservationStatus] = useState('')
   const [soldOut, setSoldOut] = useState('')
   const [loading, setLoading] = useState(false)
@@ -334,12 +336,13 @@ function AdminConsole({ member, onLogin }: { member: MemberProfile | null; onLog
     setLoading(true)
     setError('')
     try {
-      const [nextSummary, nextReservations, nextInventory] = await Promise.all([
-        api.operationsSummary(), api.reservations(reservationStatus), api.inventory(soldOut),
+      const [nextSummary, nextReservations, nextInventory, nextOutbox] = await Promise.all([
+        api.operationsSummary(), api.reservations(reservationStatus), api.inventory(soldOut), api.exhaustedOutbox(),
       ])
       setSummary(nextSummary)
       setReservations(nextReservations.content)
       setInventory(nextInventory.content)
+      setOutbox(nextOutbox.content)
     } catch (requestError) {
       setError(describeError(requestError))
     } finally {
@@ -386,6 +389,15 @@ function AdminConsole({ member, onLogin }: { member: MemberProfile | null; onLog
           )}
         </section>
       </div>
+
+      <section className="table-card outbox-card">
+        <div className="table-heading"><div><h2>재처리 대기 Outbox</h2><p>최대 시도 횟수에 도달한 실패 이벤트만 표시합니다.</p></div><span className="status failed">{outbox.length}건</span></div>
+        {loading ? <InlineLoading /> : outbox.length === 0 ? <EmptyState title="격리된 이벤트가 없습니다" description="자동 재시도 한도를 넘은 실패 이벤트가 없습니다." /> : (
+          <div className="table-scroll"><table><thead><tr><th>이벤트</th><th>대상</th><th>시도</th><th>마지막 오류</th><th>생성</th><th /></tr></thead><tbody>
+            {outbox.map((item) => <tr key={item.eventId}><td>{item.eventType}</td><td>{item.aggregateType} #{item.aggregateId}</td><td>{item.attempts}</td><td className="error-cell">{item.lastError}</td><td>{formatDateTime(item.createdAt)}</td><td><button className="button ghost small" onClick={async () => { try { await api.retryOutbox(item.eventId); await load() } catch (requestError) { setError(describeError(requestError)) } }}>재처리</button></td></tr>)}
+          </tbody></table></div>
+        )}
+      </section>
     </section>
   )
 }

@@ -49,6 +49,16 @@
         {"expr": "rate(fan_event_reservation_expired_total[5m])", "legendFormat": "expired"}
       ],
       "gridPos": {"x": 0, "y": 16, "w": 24, "h": 8}
+    },
+    {
+      "id": 7,
+      "type": "timeseries",
+      "title": "Outbox delivery and manual retry",
+      "targets": [
+        {"expr": "sum(rate(fan_event_outbox_delivery_total[5m])) by (result)", "legendFormat": "delivery {{result}}"},
+        {"expr": "sum(rate(fan_event_outbox_manual_retry_total[5m])) by (result)", "legendFormat": "manual retry {{result}}"}
+      ],
+      "gridPos": {"x": 0, "y": 24, "w": 24, "h": 8}
     }
   ]
 }

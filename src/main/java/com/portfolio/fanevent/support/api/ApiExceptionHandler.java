@@ -1,5 +1,6 @@
 package com.portfolio.fanevent.support.api;
 
+import com.portfolio.fanevent.admin.application.OutboxManualRetryRejectedException;
 import com.portfolio.fanevent.catalog.domain.InsufficientStockException;
 import com.portfolio.fanevent.idempotency.application.IdempotencyConflictException;
 import com.portfolio.fanevent.idempotency.application.IdempotencyInProgressException;
@@ -25,6 +26,11 @@ public class ApiExceptionHandler {
 
     public ApiExceptionHandler(OperationalMetrics metrics) {
         this.metrics = metrics;
+    }
+
+    @ExceptionHandler(OutboxManualRetryRejectedException.class)
+    ResponseEntity<ApiError> handleOutboxRetryRejected(OutboxManualRetryRejectedException exception) {
+        return error(HttpStatus.CONFLICT, "OUTBOX_RETRY_REJECTED", exception.getMessage(), List.of());
     }
 
     @ExceptionHandler(RateLimitExceededException.class)

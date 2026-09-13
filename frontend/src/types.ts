@@ -102,3 +102,16 @@ export interface OperationsSummary {
   confirmedSalesAmount: number
   statusCounts: Partial<Record<ReservationStatus, number>>
 }
+
+export interface OutboxEventSummary {
+  eventId: string
+  aggregateType: string
+  aggregateId: string
+  eventType: string
+  status: 'PENDING' | 'PROCESSING' | 'PUBLISHED' | 'FAILED'
+  attempts: number
+  availableAt: string
+  publishedAt: string | null
+  lastError: string | null
+  createdAt: string
+}

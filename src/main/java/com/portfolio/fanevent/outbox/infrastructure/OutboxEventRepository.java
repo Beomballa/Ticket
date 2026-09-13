@@ -6,12 +6,31 @@ import java.time.Instant;
 import java.util.List;
 import java.util.UUID;
 import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.Modifying;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 
 public interface OutboxEventRepository extends JpaRepository<OutboxEvent, UUID> {
 
     long countByStatus(OutboxStatus status);
+
+    @Modifying(clearAutomatically = true, flushAutomatically = true)
+    @Query(value = """
+            UPDATE outbox_events
+            SET status = 'PENDING',
+                attempts = 0,
+                available_at = :now,
+                published_at = NULL,
+                last_error = NULL
+            WHERE id = :eventId
+              AND status = 'FAILED'
+              AND attempts >= :maxAttempts
+            """, nativeQuery = true)
+    int resetExhaustedFailure(
+            @Param("eventId") UUID eventId,
+            @Param("maxAttempts") int maxAttempts,
+            @Param("now") Instant now
+    );
 
     @Query(value = """
             SELECT event.id

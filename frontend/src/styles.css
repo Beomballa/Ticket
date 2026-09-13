@@ -110,6 +110,8 @@ input, select { border: 1px solid var(--line); background: white; border-radius:
 .metric.success { border-top: 3px solid var(--success); }
 .metric.warning { border-top: 3px solid var(--warning); }
 .admin-grid { display: grid; grid-template-columns: 1.35fr 1fr; gap: 20px; }
+.outbox-card { margin-top: 20px; }
+.error-cell { max-width: 260px; overflow: hidden; text-overflow: ellipsis; }
 .table-card { min-width: 0; border: 1px solid var(--line); border-radius: var(--radius); background: white; overflow: hidden; }
 .table-heading { min-height: 90px; padding: 19px 20px; display: flex; align-items: center; justify-content: space-between; gap: 14px; border-bottom: 1px solid var(--line); }
 .table-heading h2 { margin: 0; font-size: 20px; }

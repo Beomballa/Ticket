@@ -5,6 +5,7 @@ import type {
   InventorySummary,
   MemberProfile,
   OperationsSummary,
+  OutboxEventSummary,
   Page,
   ReservationResult,
   ReservationSummary,
@@ -98,6 +99,13 @@ export const api = {
     if (soldOut) query.set('soldOut', soldOut)
     return request<Page<InventorySummary>>(`/api/admin/inventory?${query}`)
   },
+  exhaustedOutbox: () => request<Page<OutboxEventSummary>>(
+    '/api/admin/outbox-events/exhausted?page=0&size=12',
+  ),
+  retryOutbox: (eventId: string) => request<{ eventId: string; status: string; previousAttempts: number }>(
+    `/api/admin/outbox-events/${eventId}/retry`,
+    { method: 'POST' },
+  ),
 }
 
 export function describeError(error: unknown): string {

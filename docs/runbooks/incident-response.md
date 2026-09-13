@@ -41,11 +41,23 @@
 2. 로그에서 event ID와 event type, attempt, last_error를 확인한다.
 3. 소비자 의존 시스템과 DB 상태를 복구한 뒤 폴러 한 인스턴스의 처리율을 관찰한다.
 4. 최대 시도에 도달한 이벤트는 payload와 대상 상태를 검증하기 전 임의 재처리하지 않는다.
+5. 원인을 해소한 뒤 관리자 API로 격리 이벤트를 확인하고 단건 재처리한다.
+
+```http
+GET /api/admin/outbox-events/exhausted?page=0&size=20
+Authorization: Bearer <admin-token>
+
+POST /api/admin/outbox-events/{eventId}/retry
+Authorization: Bearer <admin-token>
+```
+
+성공 응답은 `202 Accepted`이며 이벤트를 기존 ID 그대로 `PENDING`에 되돌린다. `409 OUTBOX_RETRY_REJECTED`는 다른 운영자가 이미 재처리했거나 자동 재시도 대상인 이벤트라는 뜻이다. DB에서 status를 직접 수정하거나 실패 이벤트를 새 UUID로 복제하지 않는다.
 
 ### 복구 판정
 
 - 적체가 감소하고 새 이벤트의 처리 지연이 정상화
 - 같은 event ID의 감사 로그가 1건으로 유지
+- `OUTBOX_MANUAL_RETRY` 감사 로그와 `fan_event_outbox_manual_retry_total`에 재처리 결과가 남음
 - FAILED 원인과 재처리 여부가 사건 기록에 남음
 
 ## DB 지연·재고 충돌 급증

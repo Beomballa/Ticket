@@ -104,10 +104,18 @@ export JWT_SECRET='replace-with-a-production-secret-at-least-32-bytes'
 불투명 문자열이며 전체 건수 count 없이 페이지당 SQL 1회만 실행한다.
 
 공개 이벤트 상세는 Redis Cache-Aside로 5분간 저장한다. 이벤트·아티스트·회차·재고 변경은 DB
-커밋 이후 관련 키를 무효화한다. Redis 조회·저장 장애는 DB 원본 응답으로 우회한다. 예약 생성은
+커밋 이후 관련 키를 무효화한다. 예약 선점·취소·만료로 잔여 재고가 바뀔 때도 커밋 후 상세 키를
+삭제한다. Redis 조회·저장 장애는 DB 원본 응답으로 우회한다. 예약 생성은
 회원별 1분 20회 fixed-window 제한을 적용하며 초과 시 `429 RESERVATION_RATE_LIMITED`와
 `Retry-After`를 반환한다. Redis 장애 때 속도 제한은 fail-open으로 동작해 예약 원본 기능을
 유지한다.
+
+최대 자동 시도 횟수에 도달한 Outbox 실패 이벤트는 관리자가
+`GET /api/admin/outbox-events/exhausted`에서 확인하고
+`POST /api/admin/outbox-events/{eventId}/retry`로 다시 `PENDING`에 투입한다. 전체 운영 조회는
+`GET /api/admin/outbox-events`의 상태·이벤트 유형·aggregate ID·최소 시도 횟수·생성 기간 필터를
+사용한다. 수동 재처리는 원자적 조건 UPDATE로 같은 이벤트의 동시 요청 중 하나만 허용하며
+감사 로그와 `fan.event.outbox.manual.retry` 메트릭을 남긴다.
 
 ## 검증
 
@@ -142,6 +150,7 @@ bundle 생성을 실행한다.
 - [ADR-0011: 예약 커서 페이지네이션](docs/adr/0011-reservation-cursor-pagination.md)
 - [ADR-0012: Redis Cache-Aside와 예약 속도 제한](docs/adr/0012-redis-cache-rate-limit.md)
 - [ADR-0013: 백엔드 시연을 위한 최소 React 운영 UI](docs/adr/0013-minimal-react-operations-ui.md)
+- [ADR-0014: 최대 시도 Outbox 이벤트의 수동 재처리](docs/adr/0014-outbox-manual-retry.md)
 - [이벤트 목록 조회 기준선](docs/performance/event-list-baseline.md)
 - [관리자 조회 실행 계획](docs/performance/admin-query-plan.md)
 - [offset과 커서 페이지네이션 비교](docs/performance/reservation-pagination-comparison.md)

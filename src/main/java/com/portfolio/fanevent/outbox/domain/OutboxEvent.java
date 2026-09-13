@@ -132,6 +132,10 @@ public class OutboxEvent {
         return attempts;
     }
 
+    public OutboxStatus getStatus() {
+        return status;
+    }
+
     private void requireProcessing() {
         if (status != OutboxStatus.PROCESSING) {
             throw new IllegalStateException("처리 중인 Outbox 이벤트가 아닙니다: " + id);

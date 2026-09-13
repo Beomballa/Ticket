@@ -36,7 +36,7 @@ flowchart LR
 | 관리자 다조건 조회 | QueryDSL DTO projection과 전용 인덱스 | 10,000건 실행 계획과 SQL 횟수 검증 |
 | 깊은 페이지의 offset 비용 | `(created_at, id)` row-value cursor | 50,000건 49,001번째 기준 p50 3.067ms → 0.213ms |
 | Redis 장애 전파 | Cache-Aside fallback, rate-limit fail-open | Redis 예외 시 DB 원본 기능 유지 테스트 |
-| 장애 추적 단절 | X-Request-Id, MDC, 도메인 메트릭 | Prometheus endpoint와 Grafana 6개 패널 검증 |
+| 장애 추적 단절 | X-Request-Id, MDC, 도메인 메트릭 | Prometheus endpoint와 Grafana 7개 패널 검증 |
 
 ## 이력서용 3줄
 

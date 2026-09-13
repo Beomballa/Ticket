@@ -39,6 +39,10 @@ public class OperationalMetrics {
         increment("fan.event.outbox.delivery", "result", result);
     }
 
+    public void outboxManualRetry(String result) {
+        increment("fan.event.outbox.manual.retry", "result", result);
+    }
+
     public void expired(int count) {
         registry.counter("fan.event.reservation.expired").increment(count);
     }
