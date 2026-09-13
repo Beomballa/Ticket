@@ -173,6 +173,46 @@ class FanEventPlatformApplicationTests {
 	}
 
 	@Test
+	void openApiContractSeparatesAudienceAndDocumentsJwtSecurity() throws Exception {
+		mockMvc.perform(get("/v3/api-docs"))
+				.andExpect(status().isOk())
+				.andExpect(content().contentTypeCompatibleWith(APPLICATION_JSON))
+				.andExpect(jsonPath("$.info.title").value("StagePass API"))
+				.andExpect(jsonPath("$.info.version").value("v1"))
+				.andExpect(jsonPath("$.components.securitySchemes.bearerAuth.type").value("http"))
+				.andExpect(jsonPath("$.components.securitySchemes.bearerAuth.scheme").value("bearer"))
+				.andExpect(jsonPath("$.components.schemas.ApiError.properties.traceId").exists())
+				.andExpect(jsonPath("$.components.responses.ApiError.content['application/json'].schema['$ref']")
+						.value("#/components/schemas/ApiError"))
+				.andExpect(jsonPath("$.paths['/api/events']").exists())
+				.andExpect(jsonPath("$.paths['/api/reservations']").exists())
+				.andExpect(jsonPath("$.paths['/api/admin/reservations']").exists())
+				.andExpect(jsonPath("$.paths['/api/events'].get.responses.default['$ref']")
+						.value("#/components/responses/ApiError"));
+
+		mockMvc.perform(get("/v3/api-docs/public"))
+				.andExpect(status().isOk())
+				.andExpect(jsonPath("$.paths['/api/auth/login'].post.security").doesNotExist())
+				.andExpect(jsonPath("$.paths['/api/events']").exists())
+				.andExpect(jsonPath("$.paths['/api/reservations']").doesNotExist());
+
+		mockMvc.perform(get("/v3/api-docs/member"))
+				.andExpect(status().isOk())
+				.andExpect(jsonPath("$.paths['/api/members/me'].get.security[0].bearerAuth").exists())
+				.andExpect(jsonPath("$.paths['/api/reservations'].get.security[0].bearerAuth").exists())
+				.andExpect(jsonPath("$.paths['/api/admin/reservations']").doesNotExist());
+
+		mockMvc.perform(get("/v3/api-docs/admin"))
+				.andExpect(status().isOk())
+				.andExpect(jsonPath("$.paths['/api/admin/reservations'].get.security[0].bearerAuth").exists())
+				.andExpect(jsonPath("$.paths['/api/events']").doesNotExist());
+
+		mockMvc.perform(get("/swagger-ui.html"))
+				.andExpect(status().is3xxRedirection())
+				.andExpect(header().string("Location", containsString("/swagger-ui/index.html")));
+	}
+
+	@Test
 	void traceIdIsReturnedAndIncludedInApiErrors() throws Exception {
 		mockMvc.perform(get("/api/events/{eventId}", Long.MAX_VALUE)
 				.header("X-Request-Id", "trace-test-123"))

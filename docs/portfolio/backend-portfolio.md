@@ -38,6 +38,7 @@ flowchart LR
 | 깊은 페이지의 offset 비용 | `(created_at, id)` row-value cursor | 50,000건 49,001번째 기준 p50 3.067ms → 0.213ms |
 | Redis 장애 전파 | Cache-Aside fallback, rate-limit fail-open | Redis 예외 시 DB 원본 기능 유지 테스트 |
 | 장애 추적 단절 | X-Request-Id, MDC, 도메인 메트릭 | Prometheus endpoint와 Grafana 7개 패널 검증 |
+| 구현과 API 문서의 표류 | 컨트롤러 기반 OpenAPI와 대상별 계약 그룹 | 공개·회원·관리자 경로와 JWT 요구 사항 회귀 테스트 |
 | 운영 용량·정합성 회귀 | Docker k6 + 종료 후 SQL invariant | 상세 p95 12.66ms, 경합 p95 68.22ms, 초과 판매 0 |
 
 ## 이력서용 3줄
@@ -72,7 +73,7 @@ flowchart LR
 4. 내 예약 목록과 상세에서 상태·공연·회차·가격 스냅샷을 확인한다.
 5. 운영 콘솔에서 확정 건수, 매출, 최근 예약, 잔여 재고를 확인한다.
 6. 테스트의 경쟁 재고·멱등·Outbox 시나리오와 실행 결과를 보여준다.
-7. Grafana와 cursor 실행 계획·장애 복구 런북으로 설계 판단을 마무리한다.
+7. Swagger UI의 대상별 계약과 Grafana·cursor 실행 계획·장애 복구 런북으로 설계 판단을 마무리한다.
 
 ## 남은 위험과 확장 순서
 

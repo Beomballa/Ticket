@@ -9,6 +9,9 @@ import com.portfolio.fanevent.admin.application.CursorPage;
 import com.portfolio.fanevent.admin.application.ReservationOperationsSummary;
 import com.portfolio.fanevent.catalog.domain.InventoryType;
 import com.portfolio.fanevent.reservation.domain.ReservationStatus;
+import com.portfolio.fanevent.support.api.OpenApiConfiguration;
+import io.swagger.v3.oas.annotations.security.SecurityRequirement;
+import io.swagger.v3.oas.annotations.tags.Tag;
 import java.time.Instant;
 import java.util.List;
 import org.springframework.data.domain.Page;
@@ -22,6 +25,8 @@ import org.springframework.web.bind.annotation.RestController;
 
 @RestController
 @RequestMapping("/api/admin")
+@Tag(name = "Admin Queries", description = "예약·재고 운영 조회와 집계")
+@SecurityRequirement(name = OpenApiConfiguration.BEARER_AUTH)
 public class AdminQueryController {
 
     private final AdminQueryService adminQueryService;

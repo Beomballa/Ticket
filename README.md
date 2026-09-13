@@ -11,6 +11,7 @@
 - PostgreSQL, Redis, Flyway
 - Testcontainers, JUnit 5
 - Actuator, Micrometer
+- springdoc OpenAPI, Swagger UI
 - Gradle 8.14 Wrapper
 - React 19, TypeScript 7, Vite 8
 - GitHub Actions 백엔드·프론트 품질 게이트
@@ -33,6 +34,16 @@ docker compose up -d
 ```
 
 기본 health endpoint는 `http://localhost:8080/actuator/health`다.
+
+실행 중인 API 계약은 `http://localhost:8080/swagger-ui.html`에서 탐색한다. JSON 계약은 전체
+`/v3/api-docs`와 대상별 `/v3/api-docs/public`, `/v3/api-docs/member`, `/v3/api-docs/admin`으로
+제공한다. 회원·관리자 문서에는 JWT bearer 인증 요구 사항이 표시되며 로그인·이벤트 조회는
+인증 없는 계약으로 유지된다. 운영에서는 다음 설정으로 문서 노출을 끄거나 내부망으로 제한한다.
+
+```bash
+export SPRINGDOC_API_DOCS_ENABLED=false
+export SPRINGDOC_SWAGGER_UI_ENABLED=false
+```
 
 ### 3분 로컬 데모
 
@@ -167,6 +178,8 @@ bundle 생성을 실행한다.
 - [ADR-0012: Redis Cache-Aside와 예약 속도 제한](docs/adr/0012-redis-cache-rate-limit.md)
 - [ADR-0013: 백엔드 시연을 위한 최소 React 운영 UI](docs/adr/0013-minimal-react-operations-ui.md)
 - [ADR-0014: 최대 시도 Outbox 이벤트의 수동 재처리](docs/adr/0014-outbox-manual-retry.md)
+- [ADR-0015: 사용자 내 예약 QueryDSL 읽기 모델](docs/adr/0015-member-reservation-query-model.md)
+- [ADR-0016: 런타임 OpenAPI 계약과 대상별 문서 그룹](docs/adr/0016-runtime-openapi-contract.md)
 - [이벤트 목록 조회 기준선](docs/performance/event-list-baseline.md)
 - [관리자 조회 실행 계획](docs/performance/admin-query-plan.md)
 - [offset과 커서 페이지네이션 비교](docs/performance/reservation-pagination-comparison.md)

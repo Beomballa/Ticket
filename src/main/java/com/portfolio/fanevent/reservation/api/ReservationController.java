@@ -9,6 +9,9 @@ import com.portfolio.fanevent.reservation.application.ReservationQueryService;
 import com.portfolio.fanevent.reservation.application.ReservationRateLimiter;
 import com.portfolio.fanevent.reservation.application.ReservationResult;
 import com.portfolio.fanevent.reservation.domain.ReservationStatus;
+import com.portfolio.fanevent.support.api.OpenApiConfiguration;
+import io.swagger.v3.oas.annotations.security.SecurityRequirement;
+import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.validation.Valid;
 import java.time.Instant;
 import org.springframework.http.HttpStatus;
@@ -29,6 +32,8 @@ import org.springframework.web.bind.annotation.RestController;
 
 @RestController
 @RequestMapping("/api/reservations")
+@Tag(name = "Reservations", description = "인증 회원의 예약 조회·선점·확정·취소")
+@SecurityRequirement(name = OpenApiConfiguration.BEARER_AUTH)
 public class ReservationController {
 
     private final ReservationCommandService reservationCommandService;

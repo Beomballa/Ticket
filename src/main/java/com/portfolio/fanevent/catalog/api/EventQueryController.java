@@ -6,6 +6,7 @@ import com.portfolio.fanevent.catalog.application.EventSummary;
 import com.portfolio.fanevent.catalog.application.EventDetail;
 import com.portfolio.fanevent.catalog.domain.EventStatus;
 import com.portfolio.fanevent.catalog.domain.EventType;
+import io.swagger.v3.oas.annotations.tags.Tag;
 import java.time.Instant;
 import java.util.List;
 import org.springframework.data.domain.Page;
@@ -20,6 +21,7 @@ import org.springframework.web.bind.annotation.RestController;
 
 @RestController
 @RequestMapping("/api/events")
+@Tag(name = "Events", description = "인증 없이 조회하는 판매 이벤트")
 public class EventQueryController {
 
     private final EventQueryService eventQueryService;

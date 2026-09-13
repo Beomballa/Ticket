@@ -4,6 +4,9 @@ import com.portfolio.fanevent.catalog.application.CatalogCommandService;
 import com.portfolio.fanevent.catalog.domain.EventStatus;
 import com.portfolio.fanevent.catalog.domain.EventType;
 import com.portfolio.fanevent.catalog.domain.InventoryType;
+import com.portfolio.fanevent.support.api.OpenApiConfiguration;
+import io.swagger.v3.oas.annotations.security.SecurityRequirement;
+import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.DecimalMin;
 import jakarta.validation.constraints.Min;
@@ -23,6 +26,8 @@ import org.springframework.web.bind.annotation.RestController;
 
 @RestController
 @RequestMapping("/api/admin")
+@Tag(name = "Admin Catalog", description = "아티스트·이벤트·회차·재고 관리")
+@SecurityRequirement(name = OpenApiConfiguration.BEARER_AUTH)
 public class AdminCatalogController {
 
     private final CatalogCommandService catalogCommandService;

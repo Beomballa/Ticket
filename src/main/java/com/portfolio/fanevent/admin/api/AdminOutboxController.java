@@ -5,6 +5,9 @@ import com.portfolio.fanevent.admin.application.AdminOutboxSearchCondition;
 import com.portfolio.fanevent.admin.application.AdminOutboxService;
 import com.portfolio.fanevent.admin.application.OutboxRetryResult;
 import com.portfolio.fanevent.outbox.domain.OutboxStatus;
+import com.portfolio.fanevent.support.api.OpenApiConfiguration;
+import io.swagger.v3.oas.annotations.security.SecurityRequirement;
+import io.swagger.v3.oas.annotations.tags.Tag;
 import java.time.Instant;
 import java.util.UUID;
 import org.springframework.data.domain.Page;
@@ -23,6 +26,8 @@ import org.springframework.web.bind.annotation.RestController;
 
 @RestController
 @RequestMapping("/api/admin/outbox-events")
+@Tag(name = "Admin Outbox", description = "Outbox 이벤트 조회와 수동 재처리")
+@SecurityRequirement(name = OpenApiConfiguration.BEARER_AUTH)
 public class AdminOutboxController {
 
     private final AdminOutboxService adminOutboxService;

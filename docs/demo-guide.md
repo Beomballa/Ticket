@@ -12,6 +12,10 @@
 docker compose exec -T postgres psql -U fan_event -d fan_event < scripts/demo-data.sql
 ```
 
+`http://localhost:8080/swagger-ui.html`에서 공개·회원·관리자 API 그룹과 요청·응답 스키마를 확인한다.
+Authorize에 로그인 응답의 JWT를 넣으면 보호 API를 문서에서 직접 호출할 수 있다. 실제 토큰이나
+운영 계정 정보는 화면 캡처·문서·Git에 저장하지 않는다.
+
 ## 2. React UI 실행
 
 ```bash
@@ -33,6 +37,7 @@ npm run dev
 4. `내 예약`에서 최신순 목록과 공연·회차·가격 스냅샷 상세를 확인하고 예약을 취소한다.
 5. 관리자 계정으로 로그인해 운영 콘솔의 집계·최근 예약·재고 반환을 확인한다.
 6. `X-Request-Id`가 포함된 실패 응답은 애플리케이션 로그와 Grafana에서 같은 ID로 추적한다.
+7. Swagger UI에서 같은 흐름의 API 계약과 JWT 적용 범위를 확인한다.
 
 ## 4. 검증과 관측 환경
 
@@ -46,4 +51,4 @@ Prometheus는 `http://localhost:9090`, Grafana는 `http://localhost:3000`에서 
 
 ## 주의
 
-`scripts/demo-data.sql`은 로컬 빈 데이터베이스 시연용이다. 고정 관리자 비밀번호와 `localStorage` 토큰은 운영에 사용하지 않는다. 실제 배포는 secret manager의 JWT 키, 내부망으로 제한한 metric endpoint, HttpOnly Secure cookie 또는 BFF를 사용해야 한다.
+`scripts/demo-data.sql`은 로컬 빈 데이터베이스 시연용이다. 고정 관리자 비밀번호와 `localStorage` 토큰은 운영에 사용하지 않는다. 실제 배포는 secret manager의 JWT 키, 내부망으로 제한한 metric endpoint, 비활성화하거나 내부망으로 제한한 Swagger UI, HttpOnly Secure cookie 또는 BFF를 사용해야 한다.

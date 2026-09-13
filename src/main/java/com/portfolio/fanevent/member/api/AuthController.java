@@ -3,6 +3,9 @@ package com.portfolio.fanevent.member.api;
 import com.portfolio.fanevent.member.application.AuthService;
 import com.portfolio.fanevent.member.application.AuthToken;
 import com.portfolio.fanevent.member.application.MemberProfile;
+import com.portfolio.fanevent.support.api.OpenApiConfiguration;
+import io.swagger.v3.oas.annotations.security.SecurityRequirement;
+import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.validation.Valid;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
@@ -15,6 +18,7 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
 @RestController
+@Tag(name = "Authentication", description = "회원가입·로그인과 현재 회원 조회")
 public class AuthController {
 
     private final AuthService authService;
@@ -35,6 +39,7 @@ public class AuthController {
     }
 
     @GetMapping("/api/members/me")
+    @SecurityRequirement(name = OpenApiConfiguration.BEARER_AUTH)
     MemberProfile me(@AuthenticationPrincipal Jwt jwt) {
         return authService.getProfile(Long.valueOf(jwt.getSubject()));
     }
