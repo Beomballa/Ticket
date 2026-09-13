@@ -14,7 +14,7 @@
 - springdoc OpenAPI, Swagger UI
 - Gradle 8.14 Wrapper
 - React 19, TypeScript 7, Vite 8
-- GitHub Actions 백엔드·프론트 품질 게이트
+- GitHub Actions 백엔드·프론트·Gitleaks 품질 게이트
 
 JPA는 애그리거트 저장과 상태 변경에 사용하고, QueryDSL은 동적 목록·관리자 조회·집계에 사용한다. Native SQL은 실행 계획과 측정 결과로 필요성이 확인된 경우에만 ADR을 남기고 도입한다.
 
@@ -140,12 +140,17 @@ export JWT_SECRET='replace-with-a-production-secret-at-least-32-bytes'
 
 ```bash
 ./gradlew clean test
-cd frontend && npm run check
+(cd frontend && npm run check)
+docker run --rm -v "$PWD:/repo" \
+  ghcr.io/gitleaks/gitleaks:v8.30.1@sha256:c00b6bd0aeb3071cbcb79009cb16a60dd9e0a7c60e2be9ab65d25e6bc8abbb7f \
+  git --redact --no-banner --exit-code 1 /repo
 ```
 
 백엔드 통합 테스트는 Testcontainers로 PostgreSQL·Redis를 시작하고 Flyway 마이그레이션, JPA 초기화와
 QueryDSL 설정을 함께 검증한다. 프론트 검증은 상태·오류 표현 단위 테스트, TypeScript 검사와 production
-bundle 생성을 실행한다.
+bundle 생성을 실행한다. Gitleaks는 현재 파일만이 아니라 전체 Git 이력을 검사하며 탐지 값은 로그에서
+마스킹한다. 탐지되면 값을 출력하거나 단순 allowlist 처리하지 않고 먼저 자격증명을 폐기·교체한 뒤
+[장애 복구 런북](docs/runbooks/incident-response.md)의 절차를 따른다.
 
 재고 잠금 전략 비교 실험만 다시 실행하려면 다음 명령을 사용한다.
 
@@ -180,6 +185,7 @@ bundle 생성을 실행한다.
 - [ADR-0014: 최대 시도 Outbox 이벤트의 수동 재처리](docs/adr/0014-outbox-manual-retry.md)
 - [ADR-0015: 사용자 내 예약 QueryDSL 읽기 모델](docs/adr/0015-member-reservation-query-model.md)
 - [ADR-0016: 런타임 OpenAPI 계약과 대상별 문서 그룹](docs/adr/0016-runtime-openapi-contract.md)
+- [ADR-0017: 전체 Git 이력 비밀정보 검사](docs/adr/0017-git-secret-scanning.md)
 - [이벤트 목록 조회 기준선](docs/performance/event-list-baseline.md)
 - [관리자 조회 실행 계획](docs/performance/admin-query-plan.md)
 - [offset과 커서 페이지네이션 비교](docs/performance/reservation-pagination-comparison.md)
