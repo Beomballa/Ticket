@@ -82,6 +82,11 @@ export JWT_SECRET='replace-with-a-production-secret-at-least-32-bytes'
 `CONFIRMED` 취소는 모의 환불 후 재고를 반환한다. 동일 명령을 반복해도 결제·환불·재고 반환을
 다시 실행하지 않는다.
 
+인증 사용자는 `GET /api/reservations`에서 상태·생성 기간별로 자신의 예약만 조회하고,
+`GET /api/reservations/{id}`에서 공연·회차·재고·수량과 요청 당시 가격 스냅샷을 확인한다.
+목록은 QueryDSL 집계 Projection으로 본문과 count를 각각 한 번 실행하고, 상세는 소유권을 포함한
+헤더와 항목 쿼리 총 2회로 조립한다. 존재하지 않거나 다른 회원의 예약은 동일한 404로 응답한다.
+
 확정되지 않은 `PENDING` 예약은 만료 시각 이후 배치 작업이 `EXPIRED`로 전환하고 재고를
 반환한다. 만료 대상은 `FOR UPDATE SKIP LOCKED`로 최대 50건씩 선점하며 상태 변경과 재고 반환을
 같은 트랜잭션에서 처리한다. 여러 애플리케이션 인스턴스가 동시에 실행하거나 작업이 롤백된 뒤

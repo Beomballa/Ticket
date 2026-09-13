@@ -82,6 +82,43 @@ export interface ReservationSummary {
   totalQuantity: number
 }
 
+export interface MemberReservationSummary {
+  reservationId: number
+  status: ReservationStatus
+  totalAmount: number
+  expiresAt: string
+  createdAt: string
+  itemCount: number
+  totalQuantity: number
+  eventCount: number
+  representativeEventTitle: string
+}
+
+export interface MemberReservationDetail {
+  reservationId: number
+  status: ReservationStatus
+  totalAmount: number
+  expiresAt: string
+  confirmedAt: string | null
+  cancelledAt: string | null
+  expiredAt: string | null
+  createdAt: string
+  items: Array<{
+    itemId: number
+    inventoryId: number
+    inventoryName: string
+    quantity: number
+    unitPrice: number
+    lineAmount: number
+    eventId: number
+    eventTitle: string
+    eventSessionId: number
+    eventSessionName: string
+    venue: string
+    eventStartsAt: string
+  }>
+}
+
 export interface InventorySummary {
   inventoryId: number
   type: string

@@ -34,6 +34,7 @@ flowchart LR
 | 만료 예약의 중복 재고 반환 | `FOR UPDATE SKIP LOCKED` 배치 선점 | 복수 작업자와 롤백 재실행 테스트 |
 | 상태 변경과 후속 처리 유실 | Transactional Outbox + 소비 이력 | 실패 백오프·임대 회수·중복 소비 테스트 |
 | 관리자 다조건 조회 | QueryDSL DTO projection과 전용 인덱스 | 10,000건 실행 계획과 SQL 횟수 검증 |
+| 사용자 예약 정보 노출 | JWT 소유권 범위 + QueryDSL 읽기 모델 | 목록·상세 각 SQL 2회, 타인 예약 동일 404 |
 | 깊은 페이지의 offset 비용 | `(created_at, id)` row-value cursor | 50,000건 49,001번째 기준 p50 3.067ms → 0.213ms |
 | Redis 장애 전파 | Cache-Aside fallback, rate-limit fail-open | Redis 예외 시 DB 원본 기능 유지 테스트 |
 | 장애 추적 단절 | X-Request-Id, MDC, 도메인 메트릭 | Prometheus endpoint와 Grafana 7개 패널 검증 |
@@ -68,14 +69,13 @@ flowchart LR
 1. React 화면에서 `ON_SALE` 이벤트와 잔여 재고를 확인한다.
 2. 사용자 계정으로 1매를 선점하고 예약 만료 시각과 감소한 재고를 확인한다.
 3. 같은 예약을 모의 결제로 확정한 뒤 관리자 계정으로 전환한다.
-4. 운영 콘솔에서 확정 건수, 매출, 최근 예약, 잔여 재고를 확인한다.
-5. 테스트의 경쟁 재고·멱등·Outbox 시나리오와 실행 결과를 보여준다.
-6. Grafana에서 HTTP 지연, Redis 결과, 재고 충돌, Outbox backlog를 확인한다.
-7. cursor 실행 계획 보고서와 장애 복구 런북으로 설계 판단을 마무리한다.
+4. 내 예약 목록과 상세에서 상태·공연·회차·가격 스냅샷을 확인한다.
+5. 운영 콘솔에서 확정 건수, 매출, 최근 예약, 잔여 재고를 확인한다.
+6. 테스트의 경쟁 재고·멱등·Outbox 시나리오와 실행 결과를 보여준다.
+7. Grafana와 cursor 실행 계획·장애 복구 런북으로 설계 판단을 마무리한다.
 
 ## 남은 위험과 확장 순서
 
 - 데모 UI의 토큰 저장소를 HttpOnly cookie 기반 BFF로 변경한다.
-- Outbox 최종 실패 이벤트의 관리자 조회·수동 재처리 API를 추가한다.
-- k6 부하 시나리오로 실제 목표 TPS와 alert threshold를 확정한다.
 - 결제 gateway를 외부 sandbox와 연결하고 승인·취소 webhook 멱등성을 검증한다.
+- 운영 topology에서 장시간 부하를 재측정하고 실제 SLO에 맞춰 경보 기준을 조정한다.

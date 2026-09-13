@@ -1146,6 +1146,90 @@ class FanEventPlatformApplicationTests {
 	}
 
 	@Test
+	void memberReservationSearchAndDetailAreOwnedAndUseStableQueryCounts() throws Exception {
+		String ownerEmail = signupUniqueMember("내 예약 조회 회원");
+		String ownerToken = login(ownerEmail, "secure-password");
+		String otherEmail = signupUniqueMember("다른 예약 회원");
+		String otherToken = login(otherEmail, "secure-password");
+		Long firstInventoryId = createOnSaleInventory(10, new BigDecimal("31000.00"));
+		Long secondInventoryId = createOnSaleInventory(10, new BigDecimal("47000.00"));
+		Long ownerConfirmedId = holdReservation(ownerToken, firstInventoryId, 2);
+		confirmReservation(ownerToken, ownerConfirmedId);
+		Long ownerPendingId = holdReservation(ownerToken, secondInventoryId, 1);
+		Long otherReservationId = holdReservation(otherToken, firstInventoryId, 1);
+
+		SessionFactory sessionFactory = entityManagerFactory.unwrap(SessionFactory.class);
+		sessionFactory.getStatistics().clear();
+		mockMvc.perform(get("/api/reservations")
+				.header("Authorization", "Bearer " + ownerToken)
+				.param("createdFrom", Instant.now().minus(1, ChronoUnit.DAYS).toString())
+				.param("size", "10"))
+				.andExpect(status().isOk())
+				.andExpect(jsonPath("$.totalElements").value(2))
+				.andExpect(jsonPath("$.content[0].reservationId").value(ownerPendingId))
+				.andExpect(jsonPath("$.content[0].totalQuantity").value(1))
+				.andExpect(jsonPath("$.content[0].eventCount").value(1))
+				.andExpect(jsonPath("$.content[0].representativeEventTitle").isString())
+				.andExpect(jsonPath("$.content[1].reservationId").value(ownerConfirmedId))
+				.andExpect(jsonPath("$.content[1].totalQuantity").value(2));
+		assertThat(sessionFactory.getStatistics().getPrepareStatementCount()).isEqualTo(2);
+
+		sessionFactory.getStatistics().clear();
+		mockMvc.perform(get("/api/reservations")
+				.header("Authorization", "Bearer " + ownerToken)
+				.param("status", "CONFIRMED")
+				.param("size", "10"))
+				.andExpect(status().isOk())
+				.andExpect(jsonPath("$.totalElements").value(1))
+				.andExpect(jsonPath("$.content[0].reservationId").value(ownerConfirmedId))
+				.andExpect(jsonPath("$.content[0].status").value("CONFIRMED"));
+		assertThat(sessionFactory.getStatistics().getPrepareStatementCount()).isEqualTo(2);
+
+		sessionFactory.getStatistics().clear();
+		mockMvc.perform(get("/api/reservations/{reservationId}", ownerConfirmedId)
+				.header("Authorization", "Bearer " + ownerToken))
+				.andExpect(status().isOk())
+				.andExpect(jsonPath("$.reservationId").value(ownerConfirmedId))
+				.andExpect(jsonPath("$.status").value("CONFIRMED"))
+				.andExpect(jsonPath("$.totalAmount").value(62000.00))
+				.andExpect(jsonPath("$.confirmedAt").isString())
+				.andExpect(jsonPath("$.items.length()").value(1))
+				.andExpect(jsonPath("$.items[0].inventoryId").value(firstInventoryId))
+				.andExpect(jsonPath("$.items[0].quantity").value(2))
+				.andExpect(jsonPath("$.items[0].unitPrice").value(31000.00))
+				.andExpect(jsonPath("$.items[0].lineAmount").value(62000.00))
+				.andExpect(jsonPath("$.items[0].eventTitle", containsString("예약 이벤트")))
+				.andExpect(jsonPath("$.items[0].eventSessionName").value("1회차"));
+		assertThat(sessionFactory.getStatistics().getPrepareStatementCount()).isEqualTo(2);
+
+		mockMvc.perform(get("/api/reservations/{reservationId}", otherReservationId)
+				.header("Authorization", "Bearer " + ownerToken))
+				.andExpect(status().isNotFound())
+				.andExpect(jsonPath("$.code").value("RESOURCE_NOT_FOUND"))
+				.andExpect(jsonPath("$.message").value("예약을 찾을 수 없습니다."));
+
+		mockMvc.perform(get("/api/reservations")
+				.header("Authorization", "Bearer " + otherToken)
+				.param("status", "CONFIRMED"))
+				.andExpect(status().isOk())
+				.andExpect(jsonPath("$.totalElements").value(0));
+
+		mockMvc.perform(get("/api/reservations").param("size", "10"))
+				.andExpect(status().isUnauthorized());
+		mockMvc.perform(get("/api/reservations")
+				.header("Authorization", "Bearer " + ownerToken)
+				.param("size", "101"))
+				.andExpect(status().isOk())
+				.andExpect(jsonPath("$.size").value(100));
+		mockMvc.perform(get("/api/reservations")
+				.header("Authorization", "Bearer " + ownerToken)
+				.param("createdFrom", "2026-09-14T00:00:00Z")
+				.param("createdTo", "2026-09-13T00:00:00Z"))
+				.andExpect(status().isBadRequest())
+				.andExpect(jsonPath("$.code").value("INVALID_REQUEST"));
+	}
+
+	@Test
 	@Transactional
 	void adminReservationQueryPlanUsesStatusCreatedIndexOnLargeDataset() throws Exception {
 		String email = signupUniqueMember("실행 계획 회원");

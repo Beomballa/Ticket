@@ -6,6 +6,8 @@ import type {
   EventSummary,
   InventorySummary,
   MemberProfile,
+  MemberReservationDetail,
+  MemberReservationSummary,
   OperationsSummary,
   OutboxEventSummary,
   ReservationResult,
@@ -13,7 +15,7 @@ import type {
   ReservationSummary,
 } from './types'
 
-type View = 'events' | 'admin'
+type View = 'events' | 'reservations' | 'admin'
 
 function App() {
   const [view, setView] = useState<View>('events')
@@ -46,6 +48,9 @@ function App() {
           <button className={view === 'events' ? 'nav-active' : ''} onClick={() => setView('events')}>
             이벤트
           </button>
+          <button className={view === 'reservations' ? 'nav-active' : ''} onClick={() => setView('reservations')}>
+            내 예약
+          </button>
           <button className={view === 'admin' ? 'nav-active' : ''} onClick={() => setView('admin')}>
             운영 콘솔
           </button>
@@ -67,6 +72,8 @@ function App() {
       <main>
         {view === 'events' ? (
           <EventCatalog member={member} onLogin={() => setAuthOpen(true)} onNotice={setNotice} />
+        ) : view === 'reservations' ? (
+          <MyReservations member={member} onLogin={() => setAuthOpen(true)} onNotice={setNotice} />
         ) : (
           <AdminConsole member={member} onLogin={() => setAuthOpen(true)} />
         )}
@@ -321,6 +328,126 @@ function AuthDialog({ onClose, onAuthenticated }: { onClose: () => void; onAuthe
   )
 }
 
+function MyReservations({
+  member,
+  onLogin,
+  onNotice,
+}: {
+  member: MemberProfile | null
+  onLogin: () => void
+  onNotice: (message: string) => void
+}) {
+  const [reservations, setReservations] = useState<MemberReservationSummary[]>([])
+  const [selected, setSelected] = useState<MemberReservationDetail | null>(null)
+  const [status, setStatus] = useState('')
+  const [loading, setLoading] = useState(false)
+  const [error, setError] = useState('')
+
+  const load = useCallback(async () => {
+    if (!member) return
+    setLoading(true)
+    setError('')
+    try {
+      setReservations((await api.myReservations(status)).content)
+    } catch (requestError) {
+      setError(describeError(requestError))
+    } finally {
+      setLoading(false)
+    }
+  }, [member, status])
+
+  useEffect(() => { void load() }, [load])
+
+  const open = async (reservationId: number) => {
+    setError('')
+    try {
+      setSelected(await api.reservationDetail(reservationId))
+    } catch (requestError) {
+      setError(describeError(requestError))
+    }
+  }
+
+  if (!member) return <AccessState title="내 예약은 로그인이 필요합니다" description="본인의 예약 내역을 안전하게 확인하려면 먼저 로그인해 주세요." action="로그인" onAction={onLogin} />
+
+  return (
+    <section className="reservation-page">
+      <div className="admin-heading">
+        <div><p className="eyebrow">MY STAGEPASS</p><h1>내 예약</h1><p className="muted">선점부터 확정·취소·만료까지 예약 상태를 확인합니다.</p></div>
+        <Filter value={status} onChange={setStatus} options={[["", "전체 상태"], ["PENDING", "결제 대기"], ["CONFIRMED", "확정"], ["CANCELLED", "취소"], ["EXPIRED", "만료"], ["FAILED", "처리 실패"]]} />
+      </div>
+      {error && <ErrorPanel message={error} retry={load} />}
+      {loading ? <InlineLoading /> : reservations.length === 0 ? (
+        <EmptyState title="예약 내역이 없습니다" description="판매 중인 이벤트에서 첫 예약을 만들어 보세요." />
+      ) : (
+        <div className="reservation-history">
+          {reservations.map((item) => (
+            <button className="reservation-history-card" key={item.reservationId} onClick={() => void open(item.reservationId)}>
+              <div>
+                <span className={`status ${item.status.toLowerCase()}`}>{statusLabel[item.status]}</span>
+                <h2>{item.representativeEventTitle}{item.eventCount > 1 ? ` 외 ${item.eventCount - 1}개 이벤트` : ''}</h2>
+                <p>예약 #{item.reservationId} · {item.itemCount}개 항목 · 총 {item.totalQuantity}개</p>
+              </div>
+              <div className="reservation-history-meta"><strong>{formatCurrency(item.totalAmount)}</strong><time>{formatDateTime(item.createdAt)}</time></div>
+            </button>
+          ))}
+        </div>
+      )}
+      {selected && (
+        <ReservationDetailDrawer
+          reservation={selected}
+          onClose={() => setSelected(null)}
+          onCancel={async () => {
+            await api.cancel(selected.reservationId)
+            setSelected(await api.reservationDetail(selected.reservationId))
+            await load()
+            onNotice('예약을 취소하고 재고를 반환했습니다.')
+          }}
+        />
+      )}
+    </section>
+  )
+}
+
+function ReservationDetailDrawer({
+  reservation,
+  onClose,
+  onCancel,
+}: {
+  reservation: MemberReservationDetail
+  onClose: () => void
+  onCancel: () => Promise<void>
+}) {
+  const [pending, setPending] = useState(false)
+  const [error, setError] = useState('')
+  const cancellable = reservation.status === 'PENDING' || reservation.status === 'CONFIRMED'
+
+  return (
+    <div className="overlay" role="presentation" onMouseDown={(event) => event.target === event.currentTarget && onClose()}>
+      <aside className="drawer" role="dialog" aria-modal="true" aria-labelledby="reservation-detail-title">
+        <button className="icon-button close" onClick={onClose} aria-label="닫기">×</button>
+        <div className="drawer-body reservation-detail">
+          <p className="eyebrow">RESERVATION DETAIL</p>
+          <h2 id="reservation-detail-title">예약 #{reservation.reservationId}</h2>
+          <span className={`status ${reservation.status.toLowerCase()}`}>{statusLabel[reservation.status]}</span>
+          <p className="muted">{formatDateTime(reservation.createdAt)} 생성 · {reservation.items.length}개 항목</p>
+          {error && <ErrorPanel message={error} />}
+          <div className="reservation-detail-items">
+            {reservation.items.map((item) => (
+              <article key={item.itemId}>
+                <div><strong>{item.eventTitle}</strong><p>{item.eventSessionName} · {item.venue}</p><time>{formatDateTime(item.eventStartsAt)}</time></div>
+                <div><strong>{item.inventoryName} × {item.quantity}</strong><p>{formatCurrency(item.lineAmount)}</p></div>
+              </article>
+            ))}
+          </div>
+          <div className="reservation-detail-total"><span>총 결제 금액</span><strong>{formatCurrency(reservation.totalAmount)}</strong></div>
+          {reservation.status === 'PENDING' && <small className="muted">{formatDateTime(reservation.expiresAt)}까지 결제 대기</small>}
+          {cancellable && <button className="button ghost full" disabled={pending} onClick={async () => { setPending(true); setError(''); try { await onCancel() } catch (requestError) { setError(describeError(requestError)) } finally { setPending(false) } }}>{pending ? '처리 중…' : '예약 취소'}</button>}
+        </div>
+      </aside>
+    </div>
+  )
+}
+
 function AdminConsole({ member, onLogin }: { member: MemberProfile | null; onLogin: () => void }) {
   const [summary, setSummary] = useState<OperationsSummary | null>(null)
   const [reservations, setReservations] = useState<ReservationSummary[]>([])
@@ -418,8 +545,8 @@ function EmptyState({ title, description }: { title: string; description: string
   return <div className="empty-state"><strong>{title}</strong><p>{description}</p></div>
 }
 
-function AccessState({ title, action, onAction }: { title: string; action: string; onAction: () => void }) {
-  return <section className="access-state"><span className="lock-icon">⌁</span><p className="eyebrow">RESTRICTED AREA</p><h1>{title}</h1><p>회원 권한에 따라 운영 API 접근이 분리되어 있습니다.</p><button className="button primary" onClick={onAction}>{action}</button></section>
+function AccessState({ title, description = '회원 권한에 따라 운영 API 접근이 분리되어 있습니다.', action, onAction }: { title: string; description?: string; action: string; onAction: () => void }) {
+  return <section className="access-state"><span className="lock-icon">⌁</span><p className="eyebrow">RESTRICTED AREA</p><h1>{title}</h1><p>{description}</p><button className="button primary" onClick={onAction}>{action}</button></section>
 }
 
 function CardSkeletons() {

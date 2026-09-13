@@ -3,6 +3,8 @@ import type {
   EventDetail,
   EventSummary,
   InventorySummary,
+  MemberReservationDetail,
+  MemberReservationSummary,
   MemberProfile,
   OperationsSummary,
   OutboxEventSummary,
@@ -88,6 +90,13 @@ export const api = {
     }),
   cancel: (reservationId: number) =>
     request<ReservationResult>(`/api/reservations/${reservationId}/cancel`, { method: 'POST' }),
+  myReservations: (status = '') => {
+    const query = new URLSearchParams({ page: '0', size: '20' })
+    if (status) query.set('status', status)
+    return request<Page<MemberReservationSummary>>(`/api/reservations?${query}`)
+  },
+  reservationDetail: (reservationId: number) =>
+    request<MemberReservationDetail>(`/api/reservations/${reservationId}`),
   operationsSummary: () => request<OperationsSummary>('/api/admin/reservations/summary'),
   reservations: (status = '') => {
     const query = new URLSearchParams({ page: '0', size: '12' })
