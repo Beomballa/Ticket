@@ -1,0 +1,57 @@
+groups:
+  - name: fan-event-platform
+    rules:
+      - alert: FanEventHighApiErrorRate
+        expr: |
+          sum(rate(http_server_requests_seconds_count{status=~"5.."}[5m]))
+          /
+          clamp_min(sum(rate(http_server_requests_seconds_count[5m])), 0.001)
+          > 0.05
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: API 5xx 비율이 5%를 초과했습니다.
+          runbook: docs/runbooks/incident-response.md
+
+      - alert: FanEventHighApiP95Latency
+        expr: |
+          histogram_quantile(0.95,
+            sum(rate(http_server_requests_seconds_bucket[5m])) by (le)) > 0.5
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: 전체 API p95가 500ms를 초과했습니다.
+          runbook: docs/runbooks/incident-response.md
+
+      - alert: FanEventOutboxBacklog
+        expr: sum(fan_event_outbox_backlog{status=~"pending|failed|processing"}) > 100
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: 처리 대기 Outbox 이벤트가 100건을 초과했습니다.
+          runbook: docs/runbooks/incident-response.md
+
+      - alert: FanEventOutboxDeliveryFailure
+        expr: sum(rate(fan_event_outbox_delivery_total{result="failed"}[5m])) > 0
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: Outbox 소비 실패가 지속되고 있습니다.
+          runbook: docs/runbooks/incident-response.md
+
+      - alert: FanEventReservationRateLimitBurst
+        expr: |
+          sum(rate(fan_event_reservation_rate_limit_total{result="rejected"}[5m]))
+          /
+          clamp_min(sum(rate(fan_event_reservation_rate_limit_total[5m])), 0.001)
+          > 0.20
+        for: 5m
+        labels:
+          severity: info
+        annotations:
+          summary: 예약 생성 요청 중 속도 제한 비율이 20%를 초과했습니다.
+          runbook: docs/runbooks/incident-response.md

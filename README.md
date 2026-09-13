@@ -134,6 +134,14 @@ bundle 생성을 실행한다.
 ./gradlew test --tests '*comparesStockConcurrencyStrategiesWithoutOverselling' --info
 ```
 
+실행 중인 로컬 API에 대해 공개 상세와 예약 경합 부하 기준선을 재현하려면 Docker만으로 k6를 실행한다.
+전용 `StagePass Load Test` 이벤트 데이터만 초기화하며, 기본값은 사용자 20명·예약 시도 200회·재고
+100개다.
+
+```bash
+./scripts/run-load-test.sh
+```
+
 ## 문서
 
 - [MVP 데이터 모델](docs/architecture/erd.md)
@@ -155,6 +163,7 @@ bundle 생성을 실행한다.
 - [관리자 조회 실행 계획](docs/performance/admin-query-plan.md)
 - [offset과 커서 페이지네이션 비교](docs/performance/reservation-pagination-comparison.md)
 - [재고 잠금 전략 비교 실험](docs/performance/stock-lock-strategy-comparison.md)
+- [k6 공개 조회·예약 경합 부하 기준선](docs/performance/k6-load-baseline.md)
 - [장애 복구 런북](docs/runbooks/incident-response.md)
 - [로컬 시연 가이드](docs/demo-guide.md)
 - [백엔드 포트폴리오·면접 요약](docs/portfolio/backend-portfolio.md)

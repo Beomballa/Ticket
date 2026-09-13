@@ -37,6 +37,7 @@ flowchart LR
 | 깊은 페이지의 offset 비용 | `(created_at, id)` row-value cursor | 50,000건 49,001번째 기준 p50 3.067ms → 0.213ms |
 | Redis 장애 전파 | Cache-Aside fallback, rate-limit fail-open | Redis 예외 시 DB 원본 기능 유지 테스트 |
 | 장애 추적 단절 | X-Request-Id, MDC, 도메인 메트릭 | Prometheus endpoint와 Grafana 7개 패널 검증 |
+| 운영 용량·정합성 회귀 | Docker k6 + 종료 후 SQL invariant | 상세 p95 12.66ms, 경합 p95 68.22ms, 초과 판매 0 |
 
 ## 이력서용 3줄
 

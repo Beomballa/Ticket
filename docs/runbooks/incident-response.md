@@ -81,6 +81,12 @@ Authorization: Bearer <admin-token>
 - 재고 수량이 0 이상이고 성공 예약 수와 차감량 일치
 - p95·오류율이 정상 범위에서 10분 유지
 
+## 초기 경보 기준
+
+`observability/alerts/fan-event-alerts.yml`은 전체 API p95 500ms, 5xx 5%, Outbox active backlog 100건, Outbox 지속 실패, 예약 rate-limit 거부 20%를 초기 기준으로 사용한다. 경보가 발생하면 단일 순간값이 아니라 설정된 5~10분 지속 여부와 URI별 지표를 먼저 확인한다.
+
+이 임계값은 로컬 k6 기준선에서 출발한 값이다. 운영 SLO와 실제 트래픽 분포를 확보한 뒤 경보 민감도와 지속 시간을 조정하고 변경 근거를 사건·용량 계획 문서에 남긴다.
+
 ## 로컬 관측 환경 실행
 
 ```bash
