@@ -1,5 +1,7 @@
 # Fan Event Platform
 
+[![CI](https://github.com/Beomballa/Ticket/actions/workflows/ci.yml/badge.svg)](https://github.com/Beomballa/Ticket/actions/workflows/ci.yml)
+
 공연·팬 이벤트 예약과 한정 재고의 동시성, 멱등성, 만료 및 재처리를 검증하는 백엔드 중심 포트폴리오 프로젝트다.
 
 ## 기술 기준선
@@ -11,6 +13,7 @@
 - Actuator, Micrometer
 - Gradle 8.14 Wrapper
 - React 19, TypeScript 7, Vite 8
+- GitHub Actions 백엔드·프론트 품질 게이트
 
 JPA는 애그리거트 저장과 상태 변경에 사용하고, QueryDSL은 동적 목록·관리자 조회·집계에 사용한다. Native SQL은 실행 계획과 측정 결과로 필요성이 확인된 경우에만 ADR을 남기고 도입한다.
 
