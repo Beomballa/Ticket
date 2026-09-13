@@ -7,6 +7,7 @@ import org.springframework.dao.DataAccessException;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.data.redis.core.script.DefaultRedisScript;
 import org.springframework.stereotype.Component;
+import com.portfolio.fanevent.support.observability.OperationalMetrics;
 
 @Component
 public class ReservationRateLimiter {
@@ -23,13 +24,16 @@ public class ReservationRateLimiter {
 
     private final StringRedisTemplate redisTemplate;
     private final ReservationRateLimitProperties properties;
+    private final OperationalMetrics metrics;
 
     public ReservationRateLimiter(
             StringRedisTemplate redisTemplate,
-            ReservationRateLimitProperties properties
+            ReservationRateLimitProperties properties,
+            OperationalMetrics metrics
     ) {
         this.redisTemplate = redisTemplate;
         this.properties = properties;
+        this.metrics = metrics;
     }
 
     public void check(Long memberId) {
@@ -47,9 +51,12 @@ public class ReservationRateLimiter {
             long current = ((Number) result.get(0)).longValue();
             long ttlMillis = ((Number) result.get(1)).longValue();
             if (current > properties.limit()) {
+                metrics.rateLimit("rejected");
                 throw new RateLimitExceededException((ttlMillis + 999) / 1000);
             }
+            metrics.rateLimit("allowed");
         } catch (DataAccessException exception) {
+            metrics.rateLimit("fail_open");
             log.warn("Redis 속도 제한 확인에 실패해 예약 요청을 허용합니다. memberId={}", memberId);
         }
     }

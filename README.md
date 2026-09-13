@@ -30,6 +30,16 @@ docker compose up -d
 
 기본 health endpoint는 `http://localhost:8080/actuator/health`다.
 
+관측 환경은 애플리케이션 실행 후 별도 Compose로 시작한다.
+
+```bash
+docker compose -f compose.observability.yml up -d
+```
+
+Prometheus는 `http://localhost:9090`, 사전 구성된 Grafana 대시보드는
+`http://localhost:3000`에서 확인한다. 로컬 Grafana 기본 계정은 `admin` / `admin`이다.
+모든 HTTP 응답의 `X-Request-Id`와 오류 본문의 `traceId`로 요청을 추적할 수 있다.
+
 운영 환경에서는 반드시 32바이트 이상의 별도 JWT 서명을 설정한다.
 
 ```bash
@@ -115,5 +125,6 @@ export JWT_SECRET='replace-with-a-production-secret-at-least-32-bytes'
 - [관리자 조회 실행 계획](docs/performance/admin-query-plan.md)
 - [offset과 커서 페이지네이션 비교](docs/performance/reservation-pagination-comparison.md)
 - [재고 잠금 전략 비교 실험](docs/performance/stock-lock-strategy-comparison.md)
+- [장애 복구 런북](docs/runbooks/incident-response.md)
 
 세부 요구사항과 단계별 작업 현황은 Notion 프로젝트 문서에서 관리한다.

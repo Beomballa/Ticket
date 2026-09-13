@@ -1,6 +1,7 @@
 package com.portfolio.fanevent.outbox.infrastructure;
 
 import com.portfolio.fanevent.outbox.domain.OutboxEvent;
+import com.portfolio.fanevent.outbox.domain.OutboxStatus;
 import java.time.Instant;
 import java.util.List;
 import java.util.UUID;
@@ -9,6 +10,8 @@ import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 
 public interface OutboxEventRepository extends JpaRepository<OutboxEvent, UUID> {
+
+    long countByStatus(OutboxStatus status);
 
     @Query(value = """
             SELECT event.id

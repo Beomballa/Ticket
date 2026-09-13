@@ -7,6 +7,7 @@ import com.portfolio.fanevent.member.application.DuplicateEmailException;
 import com.portfolio.fanevent.member.application.InvalidCredentialsException;
 import com.portfolio.fanevent.payment.application.PaymentDeclinedException;
 import com.portfolio.fanevent.reservation.application.RateLimitExceededException;
+import com.portfolio.fanevent.support.observability.OperationalMetrics;
 import jakarta.persistence.EntityNotFoundException;
 import java.util.List;
 import org.slf4j.MDC;
@@ -19,6 +20,12 @@ import org.springframework.web.bind.annotation.RestControllerAdvice;
 
 @RestControllerAdvice
 public class ApiExceptionHandler {
+
+    private final OperationalMetrics metrics;
+
+    public ApiExceptionHandler(OperationalMetrics metrics) {
+        this.metrics = metrics;
+    }
 
     @ExceptionHandler(RateLimitExceededException.class)
     ResponseEntity<ApiError> handleRateLimitExceeded(RateLimitExceededException exception) {
@@ -53,6 +60,7 @@ public class ApiExceptionHandler {
 
     @ExceptionHandler(ObjectOptimisticLockingFailureException.class)
     ResponseEntity<ApiError> handleOptimisticLock(ObjectOptimisticLockingFailureException exception) {
+        metrics.inventoryConflict();
         return error(
                 HttpStatus.CONFLICT,
                 "INVENTORY_CONFLICT",

@@ -5,6 +5,7 @@ import com.portfolio.fanevent.outbox.application.OutboxEventWriter;
 import com.portfolio.fanevent.reservation.domain.Reservation;
 import com.portfolio.fanevent.reservation.domain.ReservationItem;
 import com.portfolio.fanevent.reservation.infrastructure.ReservationRepository;
+import com.portfolio.fanevent.support.observability.OperationalMetrics;
 import java.time.Clock;
 import java.time.Instant;
 import java.util.Comparator;
@@ -19,17 +20,20 @@ public class ReservationExpirationService {
     private final SellableInventoryRepository inventoryRepository;
     private final Clock clock;
     private final OutboxEventWriter outboxEventWriter;
+    private final OperationalMetrics metrics;
 
     public ReservationExpirationService(
             ReservationRepository reservationRepository,
             SellableInventoryRepository inventoryRepository,
             Clock clock,
-            OutboxEventWriter outboxEventWriter
+            OutboxEventWriter outboxEventWriter,
+            OperationalMetrics metrics
     ) {
         this.reservationRepository = reservationRepository;
         this.inventoryRepository = inventoryRepository;
         this.clock = clock;
         this.outboxEventWriter = outboxEventWriter;
+        this.metrics = metrics;
     }
 
     @Transactional
@@ -46,6 +50,7 @@ public class ReservationExpirationService {
         List<Reservation> reservations = reservationRepository.findAllWithItemsByIdIn(reservationIds);
         reservations.forEach(reservation -> expire(reservation, now));
         reservationRepository.flush();
+        metrics.expired(reservations.size());
         return reservations.size();
     }
 

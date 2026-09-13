@@ -3,6 +3,7 @@ package com.portfolio.fanevent.catalog.application;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import java.util.Optional;
+import com.portfolio.fanevent.support.observability.OperationalMetrics;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.dao.DataAccessException;
@@ -17,15 +18,18 @@ public class PublicEventCache {
     private final StringRedisTemplate redisTemplate;
     private final ObjectMapper objectMapper;
     private final PublicEventCacheProperties properties;
+    private final OperationalMetrics metrics;
 
     public PublicEventCache(
             StringRedisTemplate redisTemplate,
             ObjectMapper objectMapper,
-            PublicEventCacheProperties properties
+            PublicEventCacheProperties properties,
+            OperationalMetrics metrics
     ) {
         this.redisTemplate = redisTemplate;
         this.objectMapper = objectMapper;
         this.properties = properties;
+        this.metrics = metrics;
     }
 
     public Optional<EventDetail> get(Long eventId) {
@@ -34,10 +38,12 @@ public class PublicEventCache {
         }
         try {
             String cached = redisTemplate.opsForValue().get(key(eventId));
+            metrics.cache(cached == null ? "miss" : "hit");
             return cached == null
                     ? Optional.empty()
                     : Optional.of(objectMapper.readValue(cached, EventDetail.class));
         } catch (DataAccessException | JsonProcessingException exception) {
+            metrics.cache("error");
             log.warn("공개 이벤트 캐시 조회에 실패해 DB 조회로 전환합니다. eventId={}", eventId);
             return Optional.empty();
         }

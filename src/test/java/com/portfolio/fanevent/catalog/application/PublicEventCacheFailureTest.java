@@ -19,6 +19,8 @@ import org.junit.jupiter.api.Test;
 import org.springframework.data.redis.RedisConnectionFailureException;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.data.redis.core.ValueOperations;
+import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
+import com.portfolio.fanevent.support.observability.OperationalMetrics;
 
 @SuppressWarnings("unchecked")
 class PublicEventCacheFailureTest {
@@ -35,7 +37,8 @@ class PublicEventCacheFailureTest {
         PublicEventCache cache = new PublicEventCache(
                 redisTemplate,
                 objectMapper,
-                new PublicEventCacheProperties(true, Duration.ofMinutes(5), "test:event:"));
+                new PublicEventCacheProperties(true, Duration.ofMinutes(5), "test:event:"),
+                new OperationalMetrics(new SimpleMeterRegistry()));
         EventQueryRepository repository = mock(EventQueryRepository.class);
         EventDetail expected = new EventDetail(
                 1L,

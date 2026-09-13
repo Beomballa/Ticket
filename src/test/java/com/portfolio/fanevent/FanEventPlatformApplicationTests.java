@@ -15,6 +15,8 @@ import static org.springframework.test.web.servlet.request.MockMvcRequestBuilder
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.header;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.content;
+import static org.hamcrest.Matchers.containsString;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.portfolio.fanevent.catalog.application.CatalogCommandService;
@@ -163,6 +165,15 @@ class FanEventPlatformApplicationTests {
 		mockMvc.perform(get("/actuator/health"))
 				.andExpect(status().isOk())
 				.andExpect(jsonPath("$.status").value("UP"));
+	}
+
+	@Test
+	void traceIdIsReturnedAndIncludedInApiErrors() throws Exception {
+		mockMvc.perform(get("/api/events/{eventId}", Long.MAX_VALUE)
+				.header("X-Request-Id", "trace-test-123"))
+				.andExpect(status().isNotFound())
+				.andExpect(header().string("X-Request-Id", "trace-test-123"))
+				.andExpect(jsonPath("$.traceId").value("trace-test-123"));
 	}
 
 	@Test
@@ -1224,6 +1235,10 @@ class FanEventPlatformApplicationTests {
 				.andExpect(status().isOk())
 				.andExpect(jsonPath("$.title").value("캐시 전 제목"));
 		assertThat(sessionFactory.getStatistics().getPrepareStatementCount()).isZero();
+		mockMvc.perform(get("/actuator/prometheus"))
+				.andExpect(status().isOk())
+				.andExpect(content().string(containsString("fan_event_cache_requests_total")))
+				.andExpect(content().string(containsString("http_server_requests_seconds")));
 
 		catalogCommandService.updateEvent(
 				eventId,

@@ -19,10 +19,14 @@ import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
 import org.springframework.stereotype.Service;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.transaction.annotation.Transactional;
 
 @Service
 public class ReservationCommandService {
+
+    private static final Logger log = LoggerFactory.getLogger(ReservationCommandService.class);
 
     private final MemberRepository memberRepository;
     private final SellableInventoryRepository inventoryRepository;
@@ -87,7 +91,10 @@ public class ReservationCommandService {
                 .sorted(Comparator.comparing(ReservationItemCommand::inventoryId))
                 .forEach(command -> reserveItem(reservation, command, now));
 
-        return ReservationResult.from(reservationRepository.saveAndFlush(reservation));
+        Reservation saved = reservationRepository.saveAndFlush(reservation);
+        log.info("reservation held: reservationId={}, memberId={}, itemCount={}, expiresAt={}",
+                saved.getId(), member.getId(), commands.size(), saved.getExpiresAt());
+        return ReservationResult.from(saved);
     }
 
     @Transactional
@@ -126,6 +133,7 @@ public class ReservationCommandService {
         outboxEventWriter.appendReservationEvent(
                 reservation, "RESERVATION_CONFIRMED", now);
         reservationRepository.flush();
+        log.info("reservation confirmed: reservationId={}, memberId={}", reservationId, memberId);
         return ReservationResult.from(reservation);
     }
 
@@ -146,6 +154,7 @@ public class ReservationCommandService {
         outboxEventWriter.appendReservationEvent(
                 reservation, "RESERVATION_CANCELLED", now);
         reservationRepository.flush();
+        log.info("reservation cancelled: reservationId={}, memberId={}", reservationId, memberId);
         return ReservationResult.from(reservation);
     }
 

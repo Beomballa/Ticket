@@ -29,6 +29,10 @@ spring:
       lifecycle-management: start-only
 
 management:
+  prometheus:
+    metrics:
+      export:
+        enabled: true
   endpoints:
     web:
       exposure:
@@ -37,9 +41,15 @@ management:
     health:
       probes:
         enabled: true
+    prometheus:
+      access: unrestricted
 
 server:
   shutdown: graceful
+
+logging:
+  pattern:
+    console: "%d{yyyy-MM-dd'T'HH:mm:ss.SSSXXX} %-5level traceId=%X{traceId:-} [%thread] %logger{36} - %msg%n"
 
 app:
   cache:
