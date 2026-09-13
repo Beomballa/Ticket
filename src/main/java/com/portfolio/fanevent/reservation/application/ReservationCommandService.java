@@ -1,5 +1,6 @@
 package com.portfolio.fanevent.reservation.application;
 
+import com.portfolio.fanevent.catalog.application.PublicEventCacheInvalidator;
 import com.portfolio.fanevent.catalog.domain.InsufficientStockException;
 import com.portfolio.fanevent.catalog.domain.SellableInventory;
 import com.portfolio.fanevent.catalog.infrastructure.SellableInventoryRepository;
@@ -10,6 +11,7 @@ import com.portfolio.fanevent.member.infrastructure.MemberRepository;
 import com.portfolio.fanevent.outbox.application.OutboxEventWriter;
 import com.portfolio.fanevent.payment.application.PaymentGateway;
 import com.portfolio.fanevent.reservation.domain.Reservation;
+import com.portfolio.fanevent.reservation.domain.ReservationItem;
 import com.portfolio.fanevent.reservation.infrastructure.ReservationRepository;
 import jakarta.persistence.EntityNotFoundException;
 import java.time.Clock;
@@ -18,9 +20,10 @@ import java.util.Comparator;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
-import org.springframework.stereotype.Service;
+import java.util.stream.Collectors;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 @Service
@@ -37,6 +40,7 @@ public class ReservationCommandService {
     private final IdempotencyService idempotencyService;
     private final RequestFingerprint requestFingerprint;
     private final OutboxEventWriter outboxEventWriter;
+    private final PublicEventCacheInvalidator cacheInvalidator;
 
     public ReservationCommandService(
             MemberRepository memberRepository,
@@ -47,7 +51,8 @@ public class ReservationCommandService {
             PaymentGateway paymentGateway,
             IdempotencyService idempotencyService,
             RequestFingerprint requestFingerprint,
-            OutboxEventWriter outboxEventWriter
+            OutboxEventWriter outboxEventWriter,
+            PublicEventCacheInvalidator cacheInvalidator
     ) {
         this.memberRepository = memberRepository;
         this.inventoryRepository = inventoryRepository;
@@ -58,6 +63,7 @@ public class ReservationCommandService {
         this.idempotencyService = idempotencyService;
         this.requestFingerprint = requestFingerprint;
         this.outboxEventWriter = outboxEventWriter;
+        this.cacheInvalidator = cacheInvalidator;
     }
 
     @Transactional
@@ -86,12 +92,14 @@ public class ReservationCommandService {
     ) {
         Instant now = clock.instant();
         Reservation reservation = Reservation.pending(member, now.plus(properties.holdTtl()));
+        Set<Long> affectedEventIds = new HashSet<>();
 
         commands.stream()
                 .sorted(Comparator.comparing(ReservationItemCommand::inventoryId))
-                .forEach(command -> reserveItem(reservation, command, now));
+                .forEach(command -> affectedEventIds.add(reserveItem(reservation, command, now)));
 
         Reservation saved = reservationRepository.saveAndFlush(reservation);
+        cacheInvalidator.evictAllAfterCommit(affectedEventIds);
         log.info("reservation held: reservationId={}, memberId={}, itemCount={}, expiresAt={}",
                 saved.getId(), member.getId(), commands.size(), saved.getExpiresAt());
         return ReservationResult.from(saved);
@@ -151,6 +159,9 @@ public class ReservationCommandService {
         Instant now = clock.instant();
         reservation.cancel(now);
         reservation.getItems().forEach(item -> item.releaseInventory());
+        cacheInvalidator.evictAllAfterCommit(reservation.getItems().stream()
+                .map(ReservationItem::getEventId)
+                .collect(Collectors.toSet()));
         outboxEventWriter.appendReservationEvent(
                 reservation, "RESERVATION_CANCELLED", now);
         reservationRepository.flush();
@@ -164,7 +175,7 @@ public class ReservationCommandService {
                         "예약을 찾을 수 없습니다: " + reservationId));
     }
 
-    private void reserveItem(
+    private Long reserveItem(
             Reservation reservation,
             ReservationItemCommand command,
             Instant now
@@ -180,6 +191,7 @@ public class ReservationCommandService {
                     inventory.getId(), command.quantity(), inventory.getAvailableQuantity());
         }
         reservation.addItem(inventory, command.quantity());
+        return inventory.getEventId();
     }
 
     private void validateCommands(List<ReservationItemCommand> commands) {

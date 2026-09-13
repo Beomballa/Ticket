@@ -1,5 +1,6 @@
 package com.portfolio.fanevent.reservation.application;
 
+import com.portfolio.fanevent.catalog.application.PublicEventCacheInvalidator;
 import com.portfolio.fanevent.catalog.infrastructure.SellableInventoryRepository;
 import com.portfolio.fanevent.outbox.application.OutboxEventWriter;
 import com.portfolio.fanevent.reservation.domain.Reservation;
@@ -10,6 +11,8 @@ import java.time.Clock;
 import java.time.Instant;
 import java.util.Comparator;
 import java.util.List;
+import java.util.Set;
+import java.util.stream.Collectors;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -21,19 +24,22 @@ public class ReservationExpirationService {
     private final Clock clock;
     private final OutboxEventWriter outboxEventWriter;
     private final OperationalMetrics metrics;
+    private final PublicEventCacheInvalidator cacheInvalidator;
 
     public ReservationExpirationService(
             ReservationRepository reservationRepository,
             SellableInventoryRepository inventoryRepository,
             Clock clock,
             OutboxEventWriter outboxEventWriter,
-            OperationalMetrics metrics
+            OperationalMetrics metrics,
+            PublicEventCacheInvalidator cacheInvalidator
     ) {
         this.reservationRepository = reservationRepository;
         this.inventoryRepository = inventoryRepository;
         this.clock = clock;
         this.outboxEventWriter = outboxEventWriter;
         this.metrics = metrics;
+        this.cacheInvalidator = cacheInvalidator;
     }
 
     @Transactional
@@ -50,6 +56,11 @@ public class ReservationExpirationService {
         List<Reservation> reservations = reservationRepository.findAllWithItemsByIdIn(reservationIds);
         reservations.forEach(reservation -> expire(reservation, now));
         reservationRepository.flush();
+        Set<Long> affectedEventIds = reservations.stream()
+                .flatMap(reservation -> reservation.getItems().stream())
+                .map(ReservationItem::getEventId)
+                .collect(Collectors.toSet());
+        cacheInvalidator.evictAllAfterCommit(affectedEventIds);
         metrics.expired(reservations.size());
         return reservations.size();
     }

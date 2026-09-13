@@ -78,6 +78,10 @@ public class ReservationItem {
         return inventory.getId();
     }
 
+    public Long getEventId() {
+        return inventory.getEventId();
+    }
+
     public String getInventoryName() {
         return inventory.getName();
     }

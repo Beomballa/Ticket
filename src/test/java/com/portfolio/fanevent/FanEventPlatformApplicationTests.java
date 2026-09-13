@@ -1256,6 +1256,42 @@ class FanEventPlatformApplicationTests {
 	}
 
 	@Test
+	void reservationInventoryChangesInvalidatePublicEventCache() throws Exception {
+		String accessToken = login(signupUniqueMember("예약 캐시 무효화 회원"), "secure-password");
+		Long inventoryId = createOnSaleInventory(5, new BigDecimal("34000.00"));
+		Long eventId = jdbcTemplate.queryForObject("""
+				SELECT session.event_id
+				FROM sellable_inventory inventory
+				JOIN event_sessions session ON session.id = inventory.event_session_id
+				WHERE inventory.id = ?
+				""", Long.class, inventoryId);
+
+		mockMvc.perform(get("/api/events/{eventId}", eventId))
+				.andExpect(status().isOk())
+				.andExpect(jsonPath("$.sessions[0].inventory[0].availableQuantity").value(5));
+		assertThat(redisTemplate.hasKey("cache:event-detail:v1:" + eventId)).isTrue();
+
+		Long cancelledReservationId = holdReservation(accessToken, inventoryId, 1);
+		assertThat(redisTemplate.hasKey("cache:event-detail:v1:" + eventId)).isFalse();
+		mockMvc.perform(get("/api/events/{eventId}", eventId))
+				.andExpect(jsonPath("$.sessions[0].inventory[0].availableQuantity").value(4));
+
+		cancelTwice(accessToken, cancelledReservationId);
+		assertThat(redisTemplate.hasKey("cache:event-detail:v1:" + eventId)).isFalse();
+		mockMvc.perform(get("/api/events/{eventId}", eventId))
+				.andExpect(jsonPath("$.sessions[0].inventory[0].availableQuantity").value(5));
+
+		Long expiredReservationId = holdReservation(accessToken, inventoryId, 1);
+		mockMvc.perform(get("/api/events/{eventId}", eventId))
+				.andExpect(jsonPath("$.sessions[0].inventory[0].availableQuantity").value(4));
+		makeReservationExpired(expiredReservationId, 60);
+		assertThat(expirationService.expireNextBatch(1)).isEqualTo(1);
+		assertThat(redisTemplate.hasKey("cache:event-detail:v1:" + eventId)).isFalse();
+		mockMvc.perform(get("/api/events/{eventId}", eventId))
+				.andExpect(jsonPath("$.sessions[0].inventory[0].availableQuantity").value(5));
+	}
+
+	@Test
 	void reservationHoldRateLimitReturns429WithRetryAfter() throws Exception {
 		String email = signupUniqueMember("속도 제한 회원");
 		String accessToken = login(email, "secure-password");

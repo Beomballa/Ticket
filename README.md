@@ -10,6 +10,7 @@
 - Testcontainers, JUnit 5
 - Actuator, Micrometer
 - Gradle 8.14 Wrapper
+- React 19, TypeScript 7, Vite 8
 
 JPA는 애그리거트 저장과 상태 변경에 사용하고, QueryDSL은 동적 목록·관리자 조회·집계에 사용한다. Native SQL은 실행 계획과 측정 결과로 필요성이 확인된 경우에만 ADR을 남기고 도입한다.
 
@@ -29,6 +30,22 @@ docker compose up -d
 ```
 
 기본 health endpoint는 `http://localhost:8080/actuator/health`다.
+
+### 3분 로컬 데모
+
+API를 실행한 뒤 다른 터미널에서 재실행 가능한 데모 데이터를 넣고 React UI를 시작한다.
+
+```bash
+docker compose exec -T postgres psql -U fan_event -d fan_event < scripts/demo-data.sql
+cd frontend
+npm install
+npm run dev
+```
+
+`http://localhost:5173`에서 이벤트 예약 흐름을 확인할 수 있다. 화면에서 일반 사용자로 가입할 수 있으며,
+운영 콘솔은 로컬 전용 `admin@stagepass.local` / `DemoPass123!` 계정을 사용한다. 상세 순서는
+[로컬 시연 가이드](docs/demo-guide.md)에 정리했다. 고정 데모 계정과 브라우저 토큰 저장 방식은
+운영 환경에 사용하지 않는다.
 
 관측 환경은 애플리케이션 실행 후 별도 Compose로 시작한다.
 
@@ -96,9 +113,12 @@ export JWT_SECRET='replace-with-a-production-secret-at-least-32-bytes'
 
 ```bash
 ./gradlew clean test
+cd frontend && npm run check
 ```
 
-통합 테스트는 Testcontainers로 PostgreSQL을 시작하고 Flyway 마이그레이션, JPA 초기화와 QueryDSL 설정을 함께 검증한다.
+백엔드 통합 테스트는 Testcontainers로 PostgreSQL·Redis를 시작하고 Flyway 마이그레이션, JPA 초기화와
+QueryDSL 설정을 함께 검증한다. 프론트 검증은 상태·오류 표현 단위 테스트, TypeScript 검사와 production
+bundle 생성을 실행한다.
 
 재고 잠금 전략 비교 실험만 다시 실행하려면 다음 명령을 사용한다.
 
@@ -121,10 +141,13 @@ export JWT_SECRET='replace-with-a-production-secret-at-least-32-bytes'
 - [ADR-0010: 관리자 예약·재고 QueryDSL 조회](docs/adr/0010-admin-querydsl-read-model.md)
 - [ADR-0011: 예약 커서 페이지네이션](docs/adr/0011-reservation-cursor-pagination.md)
 - [ADR-0012: Redis Cache-Aside와 예약 속도 제한](docs/adr/0012-redis-cache-rate-limit.md)
+- [ADR-0013: 백엔드 시연을 위한 최소 React 운영 UI](docs/adr/0013-minimal-react-operations-ui.md)
 - [이벤트 목록 조회 기준선](docs/performance/event-list-baseline.md)
 - [관리자 조회 실행 계획](docs/performance/admin-query-plan.md)
 - [offset과 커서 페이지네이션 비교](docs/performance/reservation-pagination-comparison.md)
 - [재고 잠금 전략 비교 실험](docs/performance/stock-lock-strategy-comparison.md)
 - [장애 복구 런북](docs/runbooks/incident-response.md)
+- [로컬 시연 가이드](docs/demo-guide.md)
+- [백엔드 포트폴리오·면접 요약](docs/portfolio/backend-portfolio.md)
 
 세부 요구사항과 단계별 작업 현황은 Notion 프로젝트 문서에서 관리한다.
