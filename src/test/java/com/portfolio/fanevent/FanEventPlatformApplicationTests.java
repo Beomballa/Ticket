@@ -1082,6 +1082,29 @@ class FanEventPlatformApplicationTests {
 	}
 
 	@Test
+	void automaticPaymentReconciliationConvergesDeclinedResult() throws Exception {
+		String accessToken = login(signupUniqueMember("자동 결제 거절 대사 회원"), "secure-password");
+		Long inventoryId = createOnSaleInventory(2, new BigDecimal("29200.00"));
+		Long reservationId = holdReservation(accessToken, inventoryId, 1);
+
+		mockMvc.perform(post("/api/reservations/{reservationId}/confirm", reservationId)
+				.header("Authorization", "Bearer " + accessToken)
+				.header("Idempotency-Key", UUID.randomUUID().toString())
+				.contentType(APPLICATION_JSON)
+				.content(objectMapper.writeValueAsString(Map.of(
+						"paymentToken", "mock-timeout-declined"))))
+				.andExpect(status().isConflict());
+
+		assertThat(automaticReconciliationService.reconcileNextBatch()).isEqualTo(1);
+		assertThat(reservationStatus(reservationId)).isEqualTo("PENDING");
+		assertThat(inventoryQuantity(inventoryId)).isEqualTo(1);
+		assertThat(jdbcTemplate.queryForObject("""
+				SELECT status FROM payment_attempts WHERE reservation_id = ?
+				""", String.class, reservationId)).isEqualTo("DECLINED");
+		assertThat(outboxCount(reservationId, "RESERVATION_CONFIRMED")).isZero();
+	}
+
+	@Test
 	void automaticPaymentReconciliationUsesBackoffAndRecoversExpiredLease() throws Exception {
 		String accessToken = login(signupUniqueMember("자동 대사 재시도 회원"), "secure-password");
 		Long inventoryId = createOnSaleInventory(2, new BigDecimal("29500.00"));
