@@ -2,6 +2,7 @@ package com.portfolio.fanevent;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.never;
@@ -158,11 +159,12 @@ class FanEventPlatformApplicationTests {
 				    AND table_name IN (
 				    'members', 'artists', 'events', 'event_sessions', 'sellable_inventory',
 				    'reservations', 'reservation_items', 'idempotency_requests',
-				    'outbox_events', 'consumed_outbox_events', 'audit_logs'
+				    'outbox_events', 'consumed_outbox_events', 'audit_logs',
+				    'payment_attempts'
 				  )
 				""", Integer.class);
 
-		assertThat(tableCount).isEqualTo(11);
+		assertThat(tableCount).isEqualTo(12);
 	}
 
 	@Test
@@ -190,6 +192,8 @@ class FanEventPlatformApplicationTests {
 						.value("AUTHENTICATION_REQUIRED"))
 				.andExpect(jsonPath("$.components.responses.Conflict.content['application/json'].examples.INSUFFICIENT_STOCK.value.code")
 						.value("INSUFFICIENT_STOCK"))
+				.andExpect(jsonPath("$.components.responses.Conflict.content['application/json'].examples.PAYMENT_RESULT_UNKNOWN.value.code")
+						.value("PAYMENT_RESULT_UNKNOWN"))
 				.andExpect(jsonPath("$.components.responses.TooManyRequests.headers.Retry-After.example").value(60))
 				.andExpect(jsonPath("$.paths['/api/events']").exists())
 				.andExpect(jsonPath("$.paths['/api/reservations']").exists())
@@ -205,7 +209,10 @@ class FanEventPlatformApplicationTests {
 				.andExpect(jsonPath("$.paths['/api/reservations/{reservationId}/confirm'].post.responses['422']['$ref']")
 						.value("#/components/responses/UnprocessableEntity"))
 				.andExpect(jsonPath("$.paths['/api/admin/reservations'].get.responses['403']['$ref']")
-						.value("#/components/responses/Forbidden"));
+						.value("#/components/responses/Forbidden"))
+				.andExpect(jsonPath("$.paths['/api/admin/payment-attempts/unknown'].get").exists())
+				.andExpect(jsonPath("$.paths['/api/admin/payment-attempts/{paymentAttemptId}/reconcile'].post.responses['409']['$ref']")
+						.value("#/components/responses/Conflict"));
 
 		mockMvc.perform(get("/v3/api-docs/public"))
 				.andExpect(status().isOk())
@@ -456,7 +463,7 @@ class FanEventPlatformApplicationTests {
 				.andExpect(jsonPath("$.code").value("IDEMPOTENCY_KEY_REUSED"));
 
 		verify(paymentGateway, times(1)).authorize(
-				eq(reservationId), eq(new BigDecimal("16000.00")), eq("mock-approved"));
+				eq(reservationId), eq(new BigDecimal("16000.00")), eq("mock-approved"), anyString());
 	}
 
 	@Test
@@ -845,7 +852,7 @@ class FanEventPlatformApplicationTests {
 		}
 
 		verify(paymentGateway, times(1)).authorize(
-				eq(reservationId), eq(new BigDecimal("36000.00")), eq("mock-approved"));
+				eq(reservationId), eq(new BigDecimal("36000.00")), eq("mock-approved"), anyString());
 		Map<String, Object> stored = jdbcTemplate.queryForMap(
 				"SELECT status, confirmed_at, version FROM reservations WHERE id = ?",
 				reservationId);
@@ -854,6 +861,9 @@ class FanEventPlatformApplicationTests {
 		assertThat(((Number) stored.get("version")).longValue()).isEqualTo(1L);
 		assertThat(inventoryQuantity(inventoryId)).isEqualTo(3);
 		assertThat(outboxCount(reservationId, "RESERVATION_CONFIRMED")).isEqualTo(1);
+		assertThat(jdbcTemplate.queryForObject("""
+				SELECT status FROM payment_attempts WHERE reservation_id = ?
+				""", String.class, reservationId)).isEqualTo("APPROVED");
 	}
 
 	@Test
@@ -879,6 +889,82 @@ class FanEventPlatformApplicationTests {
 		assertThat(((Number) stored.get("version")).longValue()).isZero();
 		assertThat(inventoryQuantity(inventoryId)).isEqualTo(3);
 		assertThat(outboxCount(reservationId, "RESERVATION_CONFIRMED")).isZero();
+		assertThat(jdbcTemplate.queryForObject("""
+				SELECT status FROM payment_attempts WHERE reservation_id = ?
+				""", String.class, reservationId)).isEqualTo("DECLINED");
+	}
+
+	@Test
+	@WithMockUser(username = "admin-test", roles = "ADMIN")
+	void unknownPaymentIsReconciledWithoutDuplicateAuthorization() throws Exception {
+		String accessToken = login(signupUniqueMember("결제 대사 회원"), "secure-password");
+		Long inventoryId = createOnSaleInventory(3, new BigDecimal("27000.00"));
+		Long reservationId = holdReservation(accessToken, inventoryId, 1);
+
+		mockMvc.perform(post("/api/reservations/{reservationId}/confirm", reservationId)
+				.header("Authorization", "Bearer " + accessToken)
+				.header("Idempotency-Key", UUID.randomUUID().toString())
+				.contentType(APPLICATION_JSON)
+				.content(objectMapper.writeValueAsString(Map.of(
+						"paymentToken", "mock-timeout-approved"))))
+				.andExpect(status().isConflict())
+				.andExpect(jsonPath("$.code").value("PAYMENT_RESULT_UNKNOWN"))
+				.andExpect(jsonPath("$.details[0]").value(containsString("paymentAttemptId")));
+
+		Map<String, Object> attempt = jdbcTemplate.queryForMap("""
+				SELECT id, status, gateway_idempotency_key, payment_token_fingerprint
+				FROM payment_attempts
+				WHERE reservation_id = ?
+				""", reservationId);
+		UUID attemptId = (UUID) attempt.get("id");
+		assertThat(attempt.get("status")).isEqualTo("UNKNOWN");
+		assertThat(attempt.get("gateway_idempotency_key").toString())
+				.doesNotContain("mock-timeout-approved");
+		assertThat(attempt.get("payment_token_fingerprint").toString())
+				.doesNotContain("mock-timeout-approved");
+		assertThat(reservationStatus(reservationId)).isEqualTo("PENDING");
+
+		mockMvc.perform(post("/api/reservations/{reservationId}/confirm", reservationId)
+				.header("Authorization", "Bearer " + accessToken)
+				.header("Idempotency-Key", UUID.randomUUID().toString())
+				.contentType(APPLICATION_JSON)
+				.content(objectMapper.writeValueAsString(Map.of(
+						"paymentToken", "mock-approved"))))
+				.andExpect(status().isConflict())
+				.andExpect(jsonPath("$.code").value("PAYMENT_RESULT_UNKNOWN"));
+		assertThat(jdbcTemplate.queryForObject("""
+				SELECT count(*) FROM payment_attempts WHERE reservation_id = ?
+				""", Integer.class, reservationId)).isEqualTo(1);
+
+		mockMvc.perform(get("/api/admin/payment-attempts/unknown"))
+				.andExpect(status().isOk())
+				.andExpect(jsonPath("$.content[0].paymentAttemptId").value(attemptId.toString()))
+				.andExpect(jsonPath("$.content[0].status").value("UNKNOWN"));
+
+		for (int reconciliation = 0; reconciliation < 2; reconciliation++) {
+			mockMvc.perform(post(
+					"/api/admin/payment-attempts/{paymentAttemptId}/reconcile", attemptId))
+					.andExpect(status().isOk())
+					.andExpect(jsonPath("$.paymentStatus").value("APPROVED"))
+					.andExpect(jsonPath("$.reservationStatus").value("CONFIRMED"))
+					.andExpect(jsonPath("$.resolved").value(true));
+		}
+
+		verify(paymentGateway, times(1)).authorize(
+				eq(reservationId),
+				eq(new BigDecimal("27000.00")),
+				eq("mock-timeout-approved"),
+				anyString());
+		verify(paymentGateway, never()).authorize(
+				eq(reservationId), any(BigDecimal.class), eq("mock-approved"), anyString());
+		assertThat(outboxCount(reservationId, "RESERVATION_CONFIRMED")).isEqualTo(1);
+		assertThat(jdbcTemplate.queryForObject("""
+				SELECT count(*) FROM audit_logs
+				WHERE action = 'PAYMENT_RECONCILED' AND target_id = ?
+				""", Integer.class, attemptId.toString())).isEqualTo(1);
+		mockMvc.perform(get("/actuator/prometheus"))
+				.andExpect(content().string(containsString(
+						"fan_event_payment_reconciliation_total")));
 	}
 
 	@Test
@@ -954,7 +1040,7 @@ class FanEventPlatformApplicationTests {
 				.andExpect(jsonPath("$.code").value("INVALID_STATE_TRANSITION"));
 
 		verify(paymentGateway, never()).authorize(
-				eq(reservationId), any(BigDecimal.class), eq("mock-approved"));
+				eq(reservationId), any(BigDecimal.class), eq("mock-approved"), anyString());
 		assertThat(jdbcTemplate.queryForObject(
 				"SELECT status FROM reservations WHERE id = ?", String.class, reservationId))
 				.isEqualTo("PENDING");

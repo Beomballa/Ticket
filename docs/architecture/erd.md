@@ -11,6 +11,7 @@ erDiagram
     EVENTS ||--o{ EVENT_SESSIONS : has
     EVENT_SESSIONS ||--o{ SELLABLE_INVENTORY : exposes
     RESERVATIONS ||--|{ RESERVATION_ITEMS : contains
+    RESERVATIONS ||--o{ PAYMENT_ATTEMPTS : pays
     SELLABLE_INVENTORY ||--o{ RESERVATION_ITEMS : reserves
     OUTBOX_EVENTS ||--o{ CONSUMED_OUTBOX_EVENTS : consumed_by
 
@@ -51,6 +52,15 @@ erDiagram
         bigint inventory_id FK
         integer quantity
     }
+    PAYMENT_ATTEMPTS {
+        uuid id PK
+        bigint reservation_id FK
+        varchar gateway_idempotency_key UK
+        varchar payment_token_fingerprint
+        numeric amount
+        varchar status
+        bigint version
+    }
     IDEMPOTENCY_REQUESTS {
         bigint id PK
         bigint member_id FK
@@ -83,6 +93,8 @@ erDiagram
 - `available_quantity`는 0 이상이며 `total_quantity`를 초과할 수 없다.
 - 한 예약에서 같은 재고는 하나의 항목으로만 존재한다.
 - 멱등키는 회원·요청 범위 안에서 유일하다.
+- 결제 시도의 PG 멱등키는 유일하며 결제 토큰 원문은 저장하지 않는다.
+- 결과 불명 결제는 관리자 대사 전까지 예약 확정을 재호출하지 않는다.
 - 만료 조회와 Outbox 폴링은 부분 인덱스로 활성 상태만 탐색한다.
 - Outbox 소비 이력은 소비자명·이벤트 ID 조합으로 유일해 DB 부작용의 중복 반영을 막는다.
 - 애플리케이션 상태 전이는 도메인 로직이, 값의 최소 안전선은 DB 제약조건이 보호한다.

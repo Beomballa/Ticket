@@ -67,6 +67,7 @@ public class OpenApiConfiguration {
                         example("재고 부족", "INSUFFICIENT_STOCK", "예약 가능한 재고가 부족합니다."),
                         example("상태 전이 거부", "INVALID_STATE_TRANSITION", "현재 상태에서는 요청을 처리할 수 없습니다."),
                         example("멱등키 재사용", "IDEMPOTENCY_KEY_REUSED", "같은 멱등키가 다른 요청에 사용되었습니다."),
+                        example("결제 결과 확인 중", "PAYMENT_RESULT_UNKNOWN", "결제 승인 결과를 확인 중입니다."),
                         example("동시 재고 변경", "INVENTORY_CONFLICT", "재고를 확인한 뒤 다시 시도해 주세요.")))
                 .addResponses("UnprocessableEntity", apiErrorResponse(
                         "결제 승인 거절",

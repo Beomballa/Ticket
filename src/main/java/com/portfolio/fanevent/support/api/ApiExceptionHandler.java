@@ -7,6 +7,7 @@ import com.portfolio.fanevent.idempotency.application.IdempotencyInProgressExcep
 import com.portfolio.fanevent.member.application.DuplicateEmailException;
 import com.portfolio.fanevent.member.application.InvalidCredentialsException;
 import com.portfolio.fanevent.payment.application.PaymentDeclinedException;
+import com.portfolio.fanevent.payment.application.PaymentResultUnknownException;
 import com.portfolio.fanevent.reservation.application.RateLimitExceededException;
 import com.portfolio.fanevent.support.observability.OperationalMetrics;
 import jakarta.persistence.EntityNotFoundException;
@@ -57,6 +58,15 @@ public class ApiExceptionHandler {
     @ExceptionHandler(PaymentDeclinedException.class)
     ResponseEntity<ApiError> handlePaymentDeclined(PaymentDeclinedException exception) {
         return error(HttpStatus.UNPROCESSABLE_ENTITY, "PAYMENT_DECLINED", exception.getMessage(), List.of());
+    }
+
+    @ExceptionHandler(PaymentResultUnknownException.class)
+    ResponseEntity<ApiError> handlePaymentResultUnknown(PaymentResultUnknownException exception) {
+        return error(
+                HttpStatus.CONFLICT,
+                "PAYMENT_RESULT_UNKNOWN",
+                exception.getMessage(),
+                List.of("paymentAttemptId: " + exception.getPaymentAttemptId()));
     }
 
     @ExceptionHandler(InsufficientStockException.class)

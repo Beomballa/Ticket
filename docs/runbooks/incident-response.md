@@ -95,6 +95,37 @@ Authorization: Bearer <admin-token>
 - 재고 수량이 0 이상이고 성공 예약 수와 차감량 일치
 - p95·오류율이 정상 범위에서 10분 유지
 
+## 결제 결과 불명
+
+### 징후
+
+- API가 `409 PAYMENT_RESULT_UNKNOWN`과 `paymentAttemptId`를 반환
+- `fan_event_payment_reconciliation_total{result="unknown"}` 증가
+- 관리자 결과 불명 목록에 오래된 시도가 누적
+
+### 즉시 대응
+
+1. 오류 응답의 `traceId`와 `paymentAttemptId`로 승인 요청 로그를 확인한다.
+2. 관리자 API에서 결제 시도의 예약 ID, 금액, 요청 시각을 확인한다. 저장된 fingerprint를 결제 토큰처럼 사용하지 않는다.
+3. PG 장애와 조회 API 상태를 확인한 뒤 단건 대사를 실행한다.
+
+```http
+GET /api/admin/payment-attempts/unknown?page=0&size=20
+Authorization: Bearer <admin-token>
+
+POST /api/admin/payment-attempts/{paymentAttemptId}/reconcile
+Authorization: Bearer <admin-token>
+```
+
+4. `resolved=false`이면 PG 결과가 아직 없다는 뜻이므로 `UNKNOWN`을 유지한다. 승인 API를 새 키로 반복 호출하지 않는다.
+5. 승인으로 확인됐지만 예약이 이미 만료·취소돼 자동 확정할 수 없으면 환불·재고 영향을 확인하고 수동 보상 사건으로 전환한다.
+
+### 복구 판정
+
+- 대상 결제 시도가 `APPROVED` 또는 `DECLINED`로 수렴
+- 승인 건은 예약 `CONFIRMED`, `RESERVATION_CONFIRMED` Outbox 한 건과 감사 로그 한 건 유지
+- 같은 `paymentAttemptId` 재대사에도 추가 승인·Outbox가 생성되지 않음
+
 ## 초기 경보 기준
 
 `observability/alerts/fan-event-alerts.yml`은 전체 API p95 500ms, 5xx 5%, Outbox active backlog 100건, Outbox 지속 실패, 예약 rate-limit 거부 20%를 초기 기준으로 사용한다. 경보가 발생하면 단일 순간값이 아니라 설정된 5~10분 지속 여부와 URI별 지표를 먼저 확인한다.

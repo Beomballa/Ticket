@@ -31,6 +31,7 @@ flowchart LR
 |---|---|---|
 | 동시 예약의 초과 판매 | `available_quantity >= 요청량` 조건부 단일 UPDATE | 경쟁 요청에서도 음수 재고 0건 |
 | 네트워크 재시도의 중복 결제 | 회원·scope·key 기반 멱등 요청과 fingerprint | 같은 요청 결과 재생, 다른 body는 409 |
+| PG 승인 응답 유실 | 결제 시도 원장·PG 멱등키·UNKNOWN 대사 | 승인 호출 1회, 관리자 대사 후 예약·Outbox 1회 확정 |
 | 만료 예약의 중복 재고 반환 | `FOR UPDATE SKIP LOCKED` 배치 선점 | 복수 작업자와 롤백 재실행 테스트 |
 | 상태 변경과 후속 처리 유실 | Transactional Outbox + 소비 이력 | 실패 백오프·임대 회수·중복 소비 테스트 |
 | 관리자 다조건 조회 | QueryDSL DTO projection과 전용 인덱스 | 10,000건 실행 계획과 SQL 횟수 검증 |
@@ -45,7 +46,7 @@ flowchart LR
 
 - PostgreSQL 조건부 UPDATE와 `FOR UPDATE SKIP LOCKED`를 적용해 고경합 한정 재고의 초과 판매를 방지하고, 예약 만료를 다중 인스턴스에서 안전하게 병렬 처리했습니다.
 - JPA 쓰기 모델과 QueryDSL 읽기 모델을 분리하고 50,000건 데이터로 cursor pagination을 측정해 깊은 페이지 p50을 3.067ms에서 0.213ms로 개선했습니다.
-- 멱등키, Transactional Outbox, Redis 장애 fallback과 Prometheus/Grafana 관측 체계를 구축하고 Testcontainers 기반 통합 테스트로 재시도·롤백·장애 시나리오를 검증했습니다.
+- 멱등키, 결제 결과 불명 대사, Transactional Outbox와 Redis 장애 fallback을 구축하고 Testcontainers 통합 테스트로 재시도·롤백·응답 유실 시나리오를 검증했습니다.
 
 ## 면접용 STAR 이야기
 
@@ -78,5 +79,5 @@ flowchart LR
 ## 남은 위험과 확장 순서
 
 - 데모 UI의 토큰 저장소를 HttpOnly cookie 기반 BFF로 변경한다.
-- 결제 gateway를 외부 sandbox와 연결하고 승인·취소 webhook 멱등성을 검증한다.
+- 결제 gateway를 외부 sandbox와 연결하고 승인·취소 webhook 서명 및 멱등성을 검증한다.
 - 운영 topology에서 장시간 부하를 재측정하고 실제 SLO에 맞춰 경보 기준을 조정한다.
