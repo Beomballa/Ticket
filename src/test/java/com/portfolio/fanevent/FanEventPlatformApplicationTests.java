@@ -160,11 +160,11 @@ class FanEventPlatformApplicationTests {
 				    'members', 'artists', 'events', 'event_sessions', 'sellable_inventory',
 				    'reservations', 'reservation_items', 'idempotency_requests',
 				    'outbox_events', 'consumed_outbox_events', 'audit_logs',
-				    'payment_attempts'
+				    'payment_attempts', 'refund_attempts'
 				  )
 				""", Integer.class);
 
-		assertThat(tableCount).isEqualTo(12);
+		assertThat(tableCount).isEqualTo(13);
 	}
 
 	@Test
@@ -194,6 +194,10 @@ class FanEventPlatformApplicationTests {
 						.value("INSUFFICIENT_STOCK"))
 				.andExpect(jsonPath("$.components.responses.Conflict.content['application/json'].examples.PAYMENT_RESULT_UNKNOWN.value.code")
 						.value("PAYMENT_RESULT_UNKNOWN"))
+				.andExpect(jsonPath("$.components.responses.Conflict.content['application/json'].examples.REFUND_RESULT_UNKNOWN.value.code")
+						.value("REFUND_RESULT_UNKNOWN"))
+				.andExpect(jsonPath("$.components.responses.UnprocessableEntity.content['application/json'].examples.REFUND_DECLINED.value.code")
+						.value("REFUND_DECLINED"))
 				.andExpect(jsonPath("$.components.responses.TooManyRequests.headers.Retry-After.example").value(60))
 				.andExpect(jsonPath("$.paths['/api/events']").exists())
 				.andExpect(jsonPath("$.paths['/api/reservations']").exists())
@@ -208,10 +212,15 @@ class FanEventPlatformApplicationTests {
 						.value("#/components/responses/TooManyRequests"))
 				.andExpect(jsonPath("$.paths['/api/reservations/{reservationId}/confirm'].post.responses['422']['$ref']")
 						.value("#/components/responses/UnprocessableEntity"))
+				.andExpect(jsonPath("$.paths['/api/reservations/{reservationId}/cancel'].post.responses['422']['$ref']")
+						.value("#/components/responses/UnprocessableEntity"))
 				.andExpect(jsonPath("$.paths['/api/admin/reservations'].get.responses['403']['$ref']")
 						.value("#/components/responses/Forbidden"))
 				.andExpect(jsonPath("$.paths['/api/admin/payment-attempts/unknown'].get").exists())
 				.andExpect(jsonPath("$.paths['/api/admin/payment-attempts/{paymentAttemptId}/reconcile'].post.responses['409']['$ref']")
+						.value("#/components/responses/Conflict"))
+				.andExpect(jsonPath("$.paths['/api/admin/refund-attempts/unknown'].get").exists())
+				.andExpect(jsonPath("$.paths['/api/admin/refund-attempts/{refundAttemptId}/reconcile'].post.responses['409']['$ref']")
 						.value("#/components/responses/Conflict"));
 
 		mockMvc.perform(get("/v3/api-docs/public"))
@@ -1010,7 +1019,8 @@ class FanEventPlatformApplicationTests {
 
 		cancelTwice(accessToken, reservationId);
 
-		verify(paymentGateway, never()).refund(eq(reservationId), any(BigDecimal.class));
+		verify(paymentGateway, never()).refund(
+				eq(reservationId), any(BigDecimal.class), anyString(), anyString());
 		assertThat(inventoryQuantity(inventoryId)).isEqualTo(5);
 		Map<String, Object> stored = jdbcTemplate.queryForMap(
 				"SELECT status, cancelled_at, version FROM reservations WHERE id = ?",
@@ -1037,12 +1047,123 @@ class FanEventPlatformApplicationTests {
 		cancelTwice(accessToken, reservationId);
 
 		verify(paymentGateway, times(1)).refund(
-				eq(reservationId), eq(new BigDecimal("50000.00")));
+				eq(reservationId),
+				eq(new BigDecimal("50000.00")),
+				eq("mock-payment-" + reservationId),
+				eq("reservation-refund-" + reservationId));
 		assertThat(inventoryQuantity(inventoryId)).isEqualTo(5);
 		assertThat(jdbcTemplate.queryForObject(
 				"SELECT status FROM reservations WHERE id = ?", String.class, reservationId))
 				.isEqualTo("CANCELLED");
 		assertThat(outboxCount(reservationId, "RESERVATION_CANCELLED")).isEqualTo(1);
+		assertThat(jdbcTemplate.queryForObject("""
+				SELECT status FROM refund_attempts WHERE reservation_id = ?
+				""", String.class, reservationId)).isEqualTo("SUCCEEDED");
+	}
+
+	@Test
+	void declinedRefundKeepsConfirmedReservationAndHeldInventory() throws Exception {
+		String accessToken = login(signupUniqueMember("환불 거절 회원"), "secure-password");
+		Long inventoryId = createOnSaleInventory(3, new BigDecimal("26000.00"));
+		Long reservationId = holdReservation(accessToken, inventoryId, 1);
+		confirmReservation(accessToken, reservationId, "mock-refund-declined");
+
+		mockMvc.perform(post("/api/reservations/{reservationId}/cancel", reservationId)
+				.header("Authorization", "Bearer " + accessToken))
+				.andExpect(status().isUnprocessableEntity())
+				.andExpect(jsonPath("$.code").value("REFUND_DECLINED"));
+
+		assertThat(reservationStatus(reservationId)).isEqualTo("CONFIRMED");
+		assertThat(inventoryQuantity(inventoryId)).isEqualTo(2);
+		assertThat(outboxCount(reservationId, "RESERVATION_CANCELLED")).isZero();
+		assertThat(jdbcTemplate.queryForObject("""
+				SELECT status FROM refund_attempts WHERE reservation_id = ?
+				""", String.class, reservationId)).isEqualTo("DECLINED");
+	}
+
+	@Test
+	@WithMockUser(username = "admin-test", roles = "ADMIN")
+	void unknownSuccessfulRefundIsReconciledWithoutDuplicateRefund() throws Exception {
+		String accessToken = login(signupUniqueMember("환불 성공 대사 회원"), "secure-password");
+		Long inventoryId = createOnSaleInventory(2, new BigDecimal("31000.00"));
+		Long reservationId = holdReservation(accessToken, inventoryId, 1);
+		confirmReservation(accessToken, reservationId, "mock-refund-timeout-succeeded");
+
+		mockMvc.perform(post("/api/reservations/{reservationId}/cancel", reservationId)
+				.header("Authorization", "Bearer " + accessToken))
+				.andExpect(status().isConflict())
+				.andExpect(jsonPath("$.code").value("REFUND_RESULT_UNKNOWN"))
+				.andExpect(jsonPath("$.details[0]").value(containsString("refundAttemptId")));
+
+		UUID attemptId = jdbcTemplate.queryForObject("""
+				SELECT id FROM refund_attempts WHERE reservation_id = ?
+				""", UUID.class, reservationId);
+		assertThat(reservationStatus(reservationId)).isEqualTo("CONFIRMED");
+		assertThat(inventoryQuantity(inventoryId)).isEqualTo(1);
+
+		SessionFactory sessionFactory = entityManagerFactory.unwrap(SessionFactory.class);
+		sessionFactory.getStatistics().clear();
+		mockMvc.perform(get("/api/admin/refund-attempts/unknown"))
+				.andExpect(status().isOk())
+				.andExpect(jsonPath("$.content[0].refundAttemptId").value(attemptId.toString()))
+				.andExpect(jsonPath("$.content[0].status").value("UNKNOWN"));
+		assertThat(sessionFactory.getStatistics().getPrepareStatementCount()).isEqualTo(2);
+
+		for (int reconciliation = 0; reconciliation < 2; reconciliation++) {
+			mockMvc.perform(post(
+					"/api/admin/refund-attempts/{refundAttemptId}/reconcile", attemptId))
+					.andExpect(status().isOk())
+					.andExpect(jsonPath("$.refundStatus").value("SUCCEEDED"))
+					.andExpect(jsonPath("$.reservationStatus").value("CANCELLED"))
+					.andExpect(jsonPath("$.resolved").value(true));
+		}
+
+		verify(paymentGateway, times(1)).refund(
+				eq(reservationId),
+				eq(new BigDecimal("31000.00")),
+				eq("mock-payment-" + reservationId),
+				eq("reservation-refund-" + reservationId));
+		assertThat(inventoryQuantity(inventoryId)).isEqualTo(2);
+		assertThat(outboxCount(reservationId, "RESERVATION_CANCELLED")).isEqualTo(1);
+		assertThat(jdbcTemplate.queryForObject("""
+				SELECT count(*) FROM audit_logs
+				WHERE action = 'REFUND_RECONCILED' AND target_id = ?
+				""", Integer.class, attemptId.toString())).isEqualTo(1);
+		mockMvc.perform(get("/actuator/prometheus"))
+				.andExpect(content().string(containsString(
+						"fan_event_refund_reconciliation_total")));
+	}
+
+	@Test
+	@WithMockUser(username = "admin-test", roles = "ADMIN")
+	void unknownDeclinedRefundKeepsReservationConfirmedAfterReconciliation() throws Exception {
+		String accessToken = login(signupUniqueMember("환불 거절 대사 회원"), "secure-password");
+		Long inventoryId = createOnSaleInventory(2, new BigDecimal("32000.00"));
+		Long reservationId = holdReservation(accessToken, inventoryId, 1);
+		confirmReservation(accessToken, reservationId, "mock-refund-timeout-declined");
+
+		mockMvc.perform(post("/api/reservations/{reservationId}/cancel", reservationId)
+				.header("Authorization", "Bearer " + accessToken))
+				.andExpect(status().isConflict())
+				.andExpect(jsonPath("$.code").value("REFUND_RESULT_UNKNOWN"));
+
+		UUID attemptId = jdbcTemplate.queryForObject("""
+				SELECT id FROM refund_attempts WHERE reservation_id = ?
+				""", UUID.class, reservationId);
+		mockMvc.perform(post(
+				"/api/admin/refund-attempts/{refundAttemptId}/reconcile", attemptId))
+				.andExpect(status().isOk())
+				.andExpect(jsonPath("$.refundStatus").value("DECLINED"))
+				.andExpect(jsonPath("$.reservationStatus").value("CONFIRMED"))
+				.andExpect(jsonPath("$.resolved").value(true));
+
+		assertThat(reservationStatus(reservationId)).isEqualTo("CONFIRMED");
+		assertThat(inventoryQuantity(inventoryId)).isEqualTo(1);
+		assertThat(outboxCount(reservationId, "RESERVATION_CANCELLED")).isZero();
+		assertThat(jdbcTemplate.queryForObject("""
+				SELECT count(*) FROM audit_logs
+				WHERE action = 'REFUND_RECONCILED' AND target_id = ?
+				""", Integer.class, attemptId.toString())).isEqualTo(1);
 	}
 
 	@Test
@@ -1808,6 +1929,21 @@ class FanEventPlatformApplicationTests {
 					.andExpect(status().isOk())
 					.andExpect(jsonPath("$.status").value("CANCELLED"));
 		}
+	}
+
+	private void confirmReservation(
+			String accessToken,
+			Long reservationId,
+			String paymentToken
+	) throws Exception {
+		mockMvc.perform(post("/api/reservations/{reservationId}/confirm", reservationId)
+				.header("Authorization", "Bearer " + accessToken)
+				.header("Idempotency-Key", UUID.randomUUID().toString())
+				.contentType(APPLICATION_JSON)
+				.content(objectMapper.writeValueAsString(Map.of(
+						"paymentToken", paymentToken))))
+				.andExpect(status().isOk())
+				.andExpect(jsonPath("$.status").value("CONFIRMED"));
 	}
 
 	private int inventoryQuantity(Long inventoryId) {

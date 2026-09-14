@@ -68,10 +68,12 @@ public class OpenApiConfiguration {
                         example("상태 전이 거부", "INVALID_STATE_TRANSITION", "현재 상태에서는 요청을 처리할 수 없습니다."),
                         example("멱등키 재사용", "IDEMPOTENCY_KEY_REUSED", "같은 멱등키가 다른 요청에 사용되었습니다."),
                         example("결제 결과 확인 중", "PAYMENT_RESULT_UNKNOWN", "결제 승인 결과를 확인 중입니다."),
+                        example("환불 결과 확인 중", "REFUND_RESULT_UNKNOWN", "환불 결과를 확인 중입니다."),
                         example("동시 재고 변경", "INVENTORY_CONFLICT", "재고를 확인한 뒤 다시 시도해 주세요.")))
                 .addResponses("UnprocessableEntity", apiErrorResponse(
-                        "결제 승인 거절",
-                        example("결제 거절", "PAYMENT_DECLINED", "모의 결제가 승인되지 않았습니다.")))
+                        "결제 또는 환불 거절",
+                        example("결제 거절", "PAYMENT_DECLINED", "모의 결제가 승인되지 않았습니다."),
+                        example("환불 거절", "REFUND_DECLINED", "환불 요청이 거절되었습니다.")))
                 .addResponses("TooManyRequests", apiErrorResponse(
                         "예약 요청 속도 제한 초과",
                         example("요청 제한", "RESERVATION_RATE_LIMITED", "잠시 후 다시 시도해 주세요."))
@@ -110,7 +112,8 @@ public class OpenApiConfiguration {
                             }
                         }
                     }
-                    if ("confirm".equals(operation.getOperationId())) {
+                    if ("confirm".equals(operation.getOperationId())
+                            || "cancel".equals(operation.getOperationId())) {
                         addResponse(operation.getResponses(), "422", "UnprocessableEntity");
                     }
                     if ("hold".equals(operation.getOperationId())) {

@@ -15,4 +15,9 @@ public interface PaymentAttemptRepository extends JpaRepository<PaymentAttempt, 
             Long reservationId,
             Collection<PaymentAttemptStatus> statuses
     );
+
+    Optional<PaymentAttempt> findFirstByReservationIdAndStatusOrderByResolvedAtDesc(
+            Long reservationId,
+            PaymentAttemptStatus status
+    );
 }

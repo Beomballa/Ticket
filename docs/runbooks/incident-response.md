@@ -126,6 +126,38 @@ Authorization: Bearer <admin-token>
 - 승인 건은 예약 `CONFIRMED`, `RESERVATION_CONFIRMED` Outbox 한 건과 감사 로그 한 건 유지
 - 같은 `paymentAttemptId` 재대사에도 추가 승인·Outbox가 생성되지 않음
 
+## 환불 결과 불명
+
+### 징후
+
+- API가 `409 REFUND_RESULT_UNKNOWN`과 `refundAttemptId`를 반환
+- `fan_event_refund_reconciliation_total{result="unknown"}` 증가
+- 관리자 환불 결과 불명 목록에 오래된 시도가 누적
+
+### 즉시 대응
+
+1. 오류 응답의 `traceId`와 `refundAttemptId`로 환불 요청 로그를 확인한다.
+2. 관리자 API에서 예약 ID, 원 결제 시도 ID, 금액과 요청 시각을 확인한다.
+3. PG 환불 조회 API가 정상인지 확인한 뒤 단건 대사를 실행한다.
+
+```http
+GET /api/admin/refund-attempts/unknown?page=0&size=20
+Authorization: Bearer <admin-token>
+
+POST /api/admin/refund-attempts/{refundAttemptId}/reconcile
+Authorization: Bearer <admin-token>
+```
+
+4. `resolved=false`이면 PG 결과가 아직 없으므로 `UNKNOWN`을 유지한다. 새 키로 환불을 다시 호출하거나 DB에서 예약을 직접 취소하지 않는다.
+5. 거절로 확인되면 예약 `CONFIRMED`와 선점 재고를 유지하고 고객 안내 또는 PG 거절 원인 해소 절차로 전환한다.
+
+### 복구 판정
+
+- 대상 환불 시도가 `SUCCEEDED` 또는 `DECLINED`로 수렴
+- 성공 건은 예약 `CANCELLED`, 재고 반환, `RESERVATION_CANCELLED` Outbox와 감사 로그 한 건 유지
+- 거절 건은 예약 `CONFIRMED`와 기존 재고 수량 유지
+- 같은 `refundAttemptId` 재대사에도 추가 환불·재고 반환·Outbox가 생성되지 않음
+
 ## 초기 경보 기준
 
 `observability/alerts/fan-event-alerts.yml`은 전체 API p95 500ms, 5xx 5%, Outbox active backlog 100건, Outbox 지속 실패, 예약 rate-limit 거부 20%를 초기 기준으로 사용한다. 경보가 발생하면 단일 순간값이 아니라 설정된 5~10분 지속 여부와 URI별 지표를 먼저 확인한다.

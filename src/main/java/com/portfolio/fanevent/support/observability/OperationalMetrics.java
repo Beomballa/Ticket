@@ -47,6 +47,10 @@ public class OperationalMetrics {
         increment("fan.event.payment.reconciliation", "result", result);
     }
 
+    public void refundReconciliation(String result) {
+        increment("fan.event.refund.reconciliation", "result", result);
+    }
+
     public void expired(int count) {
         registry.counter("fan.event.reservation.expired").increment(count);
     }

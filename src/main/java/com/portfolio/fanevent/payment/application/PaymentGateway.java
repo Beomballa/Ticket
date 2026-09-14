@@ -13,5 +13,12 @@ public interface PaymentGateway {
 
     PaymentReconciliationResult getAuthorizationResult(String gatewayIdempotencyKey);
 
-    void refund(Long reservationId, BigDecimal amount);
+    RefundResult refund(
+            Long reservationId,
+            BigDecimal amount,
+            String gatewayPaymentReference,
+            String gatewayIdempotencyKey
+    );
+
+    RefundResult getRefundResult(String gatewayIdempotencyKey);
 }

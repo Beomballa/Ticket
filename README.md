@@ -92,8 +92,8 @@ export JWT_SECRET='replace-with-a-production-secret-at-least-32-bytes'
 예약 확정은 `POST /api/reservations/{id}/confirm`, 취소는
 `POST /api/reservations/{id}/cancel`을 사용한다. MVP 모의 결제의 승인 토큰은
 `mock-approved`이며 다른 토큰은 `PAYMENT_DECLINED`로 처리된다. `PENDING` 취소는 재고만 반환하고,
-`CONFIRMED` 취소는 모의 환불 후 재고를 반환한다. 동일 명령을 반복해도 결제·환불·재고 반환을
-다시 실행하지 않는다.
+`CONFIRMED` 취소는 환불 성공이 확인된 뒤 재고를 반환한다. 동일 명령을 반복해도 결제·환불·재고
+반환을 다시 실행하지 않는다.
 
 결제 승인 전에 PG 멱등키와 토큰 fingerprint를 `payment_attempts` 원장에 기록하며 토큰 원문은
 저장하지 않는다. 응답 유실을 재현하는 `mock-timeout-approved` 토큰은 PG에는 승인 결과를 남기고
@@ -101,6 +101,14 @@ API에는 `409 PAYMENT_RESULT_UNKNOWN`을 반환한다. 관리자는
 `GET /api/admin/payment-attempts/unknown`에서 결과 불명 시도를 조회하고
 `POST /api/admin/payment-attempts/{paymentAttemptId}/reconcile`로 PG 결과를 대사한다. 승인 결과는
 예약 확정·Outbox·감사 로그와 함께 반영되며 같은 대사 요청을 반복해도 부작용은 한 번만 발생한다.
+
+확정 예약의 취소 전에 승인 결제를 참조하는 `refund_attempts` 원장과 예약별 고정 PG 멱등키를
+저장한다. `mock-refund-declined`, `mock-refund-timeout-succeeded`,
+`mock-refund-timeout-declined` 결제 토큰으로 환불 거절과 응답 유실을 재현할 수 있다. 결과 불명은
+`409 REFUND_RESULT_UNKNOWN`을 반환하며 예약과 재고를 유지한다. 관리자는
+`GET /api/admin/refund-attempts/unknown`과
+`POST /api/admin/refund-attempts/{refundAttemptId}/reconcile`로 결과를 대사한다. 성공이 확인된 경우에만
+예약 취소·재고 반환·Outbox·감사 로그를 함께 반영한다.
 
 인증 사용자는 `GET /api/reservations`에서 상태·생성 기간별로 자신의 예약만 조회하고,
 `GET /api/reservations/{id}`에서 공연·회차·재고·수량과 요청 당시 가격 스냅샷을 확인한다.
@@ -196,6 +204,7 @@ bundle 생성을 실행한다. Gitleaks는 현재 파일만이 아니라 전체 
 - [ADR-0016: 런타임 OpenAPI 계약과 대상별 문서 그룹](docs/adr/0016-runtime-openapi-contract.md)
 - [ADR-0017: 전체 Git 이력 비밀정보 검사](docs/adr/0017-git-secret-scanning.md)
 - [ADR-0018: 결제 시도 원장과 결과 불명 대사](docs/adr/0018-payment-attempt-reconciliation.md)
+- [ADR-0019: 환불 시도 원장과 결과 불명 대사](docs/adr/0019-refund-attempt-reconciliation.md)
 - [이벤트 목록 조회 기준선](docs/performance/event-list-baseline.md)
 - [관리자 조회 실행 계획](docs/performance/admin-query-plan.md)
 - [offset과 커서 페이지네이션 비교](docs/performance/reservation-pagination-comparison.md)

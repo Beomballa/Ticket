@@ -8,6 +8,8 @@ import com.portfolio.fanevent.member.application.DuplicateEmailException;
 import com.portfolio.fanevent.member.application.InvalidCredentialsException;
 import com.portfolio.fanevent.payment.application.PaymentDeclinedException;
 import com.portfolio.fanevent.payment.application.PaymentResultUnknownException;
+import com.portfolio.fanevent.payment.application.RefundDeclinedException;
+import com.portfolio.fanevent.payment.application.RefundResultUnknownException;
 import com.portfolio.fanevent.reservation.application.RateLimitExceededException;
 import com.portfolio.fanevent.support.observability.OperationalMetrics;
 import jakarta.persistence.EntityNotFoundException;
@@ -67,6 +69,20 @@ public class ApiExceptionHandler {
                 "PAYMENT_RESULT_UNKNOWN",
                 exception.getMessage(),
                 List.of("paymentAttemptId: " + exception.getPaymentAttemptId()));
+    }
+
+    @ExceptionHandler(RefundDeclinedException.class)
+    ResponseEntity<ApiError> handleRefundDeclined(RefundDeclinedException exception) {
+        return error(HttpStatus.UNPROCESSABLE_ENTITY, "REFUND_DECLINED", exception.getMessage(), List.of());
+    }
+
+    @ExceptionHandler(RefundResultUnknownException.class)
+    ResponseEntity<ApiError> handleRefundResultUnknown(RefundResultUnknownException exception) {
+        return error(
+                HttpStatus.CONFLICT,
+                "REFUND_RESULT_UNKNOWN",
+                exception.getMessage(),
+                List.of("refundAttemptId: " + exception.getRefundAttemptId()));
     }
 
     @ExceptionHandler(InsufficientStockException.class)

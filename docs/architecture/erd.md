@@ -12,6 +12,8 @@ erDiagram
     EVENT_SESSIONS ||--o{ SELLABLE_INVENTORY : exposes
     RESERVATIONS ||--|{ RESERVATION_ITEMS : contains
     RESERVATIONS ||--o{ PAYMENT_ATTEMPTS : pays
+    RESERVATIONS ||--o| REFUND_ATTEMPTS : refunds
+    PAYMENT_ATTEMPTS ||--o| REFUND_ATTEMPTS : refunded_by
     SELLABLE_INVENTORY ||--o{ RESERVATION_ITEMS : reserves
     OUTBOX_EVENTS ||--o{ CONSUMED_OUTBOX_EVENTS : consumed_by
 
@@ -61,6 +63,16 @@ erDiagram
         varchar status
         bigint version
     }
+    REFUND_ATTEMPTS {
+        uuid id PK
+        bigint reservation_id FK,UK
+        uuid payment_attempt_id FK
+        varchar gateway_idempotency_key UK
+        varchar gateway_payment_reference
+        numeric amount
+        varchar status
+        bigint version
+    }
     IDEMPOTENCY_REQUESTS {
         bigint id PK
         bigint member_id FK
@@ -95,6 +107,8 @@ erDiagram
 - 멱등키는 회원·요청 범위 안에서 유일하다.
 - 결제 시도의 PG 멱등키는 유일하며 결제 토큰 원문은 저장하지 않는다.
 - 결과 불명 결제는 관리자 대사 전까지 예약 확정을 재호출하지 않는다.
+- 예약별 환불 시도는 한 건이며 결과 불명 동안 예약은 `CONFIRMED`, 재고는 선점 상태를 유지한다.
+- 환불 성공이 확인된 트랜잭션에서만 예약 취소·재고 반환·Outbox를 함께 반영한다.
 - 만료 조회와 Outbox 폴링은 부분 인덱스로 활성 상태만 탐색한다.
 - Outbox 소비 이력은 소비자명·이벤트 ID 조합으로 유일해 DB 부작용의 중복 반영을 막는다.
 - 애플리케이션 상태 전이는 도메인 로직이, 값의 최소 안전선은 DB 제약조건이 보호한다.

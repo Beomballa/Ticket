@@ -15,10 +15,16 @@ import com.portfolio.fanevent.payment.application.PaymentAuthorization;
 import com.portfolio.fanevent.payment.application.PaymentDeclinedException;
 import com.portfolio.fanevent.payment.application.PaymentGatewayTimeoutException;
 import com.portfolio.fanevent.payment.application.PaymentResultUnknownException;
+import com.portfolio.fanevent.payment.application.RefundAttemptService;
+import com.portfolio.fanevent.payment.application.RefundDeclinedException;
+import com.portfolio.fanevent.payment.application.RefundGatewayTimeoutException;
+import com.portfolio.fanevent.payment.application.RefundResult;
+import com.portfolio.fanevent.payment.application.RefundResultUnknownException;
 import com.portfolio.fanevent.payment.domain.PaymentAttempt;
 import com.portfolio.fanevent.payment.domain.PaymentAttemptStatus;
+import com.portfolio.fanevent.payment.domain.RefundAttempt;
+import com.portfolio.fanevent.payment.domain.RefundAttemptStatus;
 import com.portfolio.fanevent.reservation.domain.Reservation;
-import com.portfolio.fanevent.reservation.domain.ReservationItem;
 import com.portfolio.fanevent.reservation.infrastructure.ReservationRepository;
 import jakarta.persistence.EntityNotFoundException;
 import java.time.Clock;
@@ -27,7 +33,6 @@ import java.util.Comparator;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
-import java.util.stream.Collectors;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
@@ -45,10 +50,12 @@ public class ReservationCommandService {
     private final Clock clock;
     private final PaymentGateway paymentGateway;
     private final PaymentAttemptService paymentAttemptService;
+    private final RefundAttemptService refundAttemptService;
     private final IdempotencyService idempotencyService;
     private final RequestFingerprint requestFingerprint;
     private final OutboxEventWriter outboxEventWriter;
     private final PublicEventCacheInvalidator cacheInvalidator;
+    private final ReservationCancellationFinalizer cancellationFinalizer;
 
     public ReservationCommandService(
             MemberRepository memberRepository,
@@ -58,10 +65,12 @@ public class ReservationCommandService {
             Clock clock,
             PaymentGateway paymentGateway,
             PaymentAttemptService paymentAttemptService,
+            RefundAttemptService refundAttemptService,
             IdempotencyService idempotencyService,
             RequestFingerprint requestFingerprint,
             OutboxEventWriter outboxEventWriter,
-            PublicEventCacheInvalidator cacheInvalidator
+            PublicEventCacheInvalidator cacheInvalidator,
+            ReservationCancellationFinalizer cancellationFinalizer
     ) {
         this.memberRepository = memberRepository;
         this.inventoryRepository = inventoryRepository;
@@ -70,10 +79,12 @@ public class ReservationCommandService {
         this.clock = clock;
         this.paymentGateway = paymentGateway;
         this.paymentAttemptService = paymentAttemptService;
+        this.refundAttemptService = refundAttemptService;
         this.idempotencyService = idempotencyService;
         this.requestFingerprint = requestFingerprint;
         this.outboxEventWriter = outboxEventWriter;
         this.cacheInvalidator = cacheInvalidator;
+        this.cancellationFinalizer = cancellationFinalizer;
     }
 
     @Transactional
@@ -205,19 +216,43 @@ public class ReservationCommandService {
         }
 
         if (reservation.isConfirmed()) {
-            paymentGateway.refund(reservation.getId(), reservation.getTotalAmount());
+            RefundAttempt attempt = refundAttemptService.begin(
+                    reservation.getId(), reservation.getTotalAmount());
+            refundPayment(reservation, attempt);
         }
         Instant now = clock.instant();
-        reservation.cancel(now);
-        reservation.getItems().forEach(item -> item.releaseInventory());
-        cacheInvalidator.evictAllAfterCommit(reservation.getItems().stream()
-                .map(ReservationItem::getEventId)
-                .collect(Collectors.toSet()));
-        outboxEventWriter.appendReservationEvent(
-                reservation, "RESERVATION_CANCELLED", now);
+        cancellationFinalizer.complete(reservation, now);
         reservationRepository.flush();
         log.info("reservation cancelled: reservationId={}, memberId={}", reservationId, memberId);
         return ReservationResult.from(reservation);
+    }
+
+    private void refundPayment(Reservation reservation, RefundAttempt attempt) {
+        if (attempt.getStatus() == RefundAttemptStatus.SUCCEEDED) {
+            return;
+        }
+        if (attempt.getStatus() == RefundAttemptStatus.DECLINED) {
+            throw new RefundDeclinedException();
+        }
+        if (attempt.getStatus() == RefundAttemptStatus.UNKNOWN) {
+            throw new RefundResultUnknownException(attempt.getId());
+        }
+
+        try {
+            RefundResult result = paymentGateway.refund(
+                    reservation.getId(),
+                    reservation.getTotalAmount(),
+                    attempt.getGatewayPaymentReference(),
+                    attempt.getGatewayIdempotencyKey());
+            refundAttemptService.succeed(
+                    attempt.getId(), result.gatewayRefundReference());
+        } catch (RefundDeclinedException exception) {
+            refundAttemptService.decline(attempt.getId(), exception.getMessage());
+            throw exception;
+        } catch (RefundGatewayTimeoutException exception) {
+            refundAttemptService.markUnknown(attempt.getId(), exception.getMessage());
+            throw new RefundResultUnknownException(attempt.getId());
+        }
     }
 
     private Reservation findOwnedReservation(Long memberId, Long reservationId) {
