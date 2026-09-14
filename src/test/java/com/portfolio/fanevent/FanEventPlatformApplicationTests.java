@@ -1140,6 +1140,7 @@ class FanEventPlatformApplicationTests {
 						"fan_event_payment_reconciliation_oldest_age_seconds")))
 				.andExpect(content().string(containsString(
 						"fan_event_reconciliation_automatic_total")));
+		resolveUnknownPaymentFixture(attemptId);
 	}
 
 	@Test
@@ -1179,6 +1180,7 @@ class FanEventPlatformApplicationTests {
 				SELECT reconciliation_lease_until IS NULL
 				FROM payment_attempts WHERE id = ?
 				""", Boolean.class, staleOwner.attemptId())).isTrue();
+		resolveUnknownPaymentFixture(staleOwner.attemptId());
 	}
 
 	@Test
@@ -2174,6 +2176,17 @@ class FanEventPlatformApplicationTests {
 				  AND aggregate_id = ?
 				  AND event_type = ?
 				""", Integer.class, reservationId.toString(), eventType);
+	}
+
+	private void resolveUnknownPaymentFixture(UUID attemptId) {
+		jdbcTemplate.update("""
+				UPDATE payment_attempts
+				SET status = 'DECLINED',
+				    resolved_at = CURRENT_TIMESTAMP,
+				    next_reconciliation_at = NULL,
+				    reconciliation_lease_until = NULL
+				WHERE id = ? AND status = 'UNKNOWN'
+				""", attemptId);
 	}
 
 	private UUID outboxEventId(Long reservationId, String eventType) {
