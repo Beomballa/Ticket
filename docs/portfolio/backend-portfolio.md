@@ -33,6 +33,7 @@ flowchart LR
 | 네트워크 재시도의 중복 결제 | 회원·scope·key 기반 멱등 요청과 fingerprint | 같은 요청 결과 재생, 다른 body는 409 |
 | PG 승인 응답 유실 | 결제 시도 원장·PG 멱등키·UNKNOWN 대사 | 승인 호출 1회, 관리자 대사 후 예약·Outbox 1회 확정 |
 | PG 환불 응답 유실 | 환불 시도 원장·예약별 PG 멱등키·UNKNOWN 대사 | 결과 확인 전 재고 유지, 성공 대사 후 취소·재고 반환 1회 |
+| 결과 불명 원장의 장기 고착 | 만료 임대·`SKIP LOCKED` 자동 대사·지수 백오프 | 동시 작업자 단일 선점, 임대 회수, 체류 시간 경보 통합 테스트 |
 | 만료 예약의 중복 재고 반환 | `FOR UPDATE SKIP LOCKED` 배치 선점 | 복수 작업자와 롤백 재실행 테스트 |
 | 상태 변경과 후속 처리 유실 | Transactional Outbox + 소비 이력 | 실패 백오프·임대 회수·중복 소비 테스트 |
 | 관리자 다조건 조회 | QueryDSL DTO projection과 전용 인덱스 | 10,000건 실행 계획과 SQL 횟수 검증 |
@@ -47,7 +48,7 @@ flowchart LR
 
 - PostgreSQL 조건부 UPDATE와 `FOR UPDATE SKIP LOCKED`를 적용해 고경합 한정 재고의 초과 판매를 방지하고, 예약 만료를 다중 인스턴스에서 안전하게 병렬 처리했습니다.
 - JPA 쓰기 모델과 QueryDSL 읽기 모델을 분리하고 50,000건 데이터로 cursor pagination을 측정해 깊은 페이지 p50을 3.067ms에서 0.213ms로 개선했습니다.
-- 멱등키, 결제·환불 결과 불명 대사, Transactional Outbox와 Redis 장애 fallback을 구축하고 Testcontainers 통합 테스트로 재시도·롤백·응답 유실 시나리오를 검증했습니다.
+- 멱등키, 결제·환불 결과 불명 자동 대사, Transactional Outbox와 Redis 장애 fallback을 구축하고 Testcontainers 통합 테스트로 동시 선점·임대 회수·백오프·응답 유실 시나리오를 검증했습니다.
 
 ## 면접용 STAR 이야기
 
@@ -61,7 +62,7 @@ flowchart LR
 
 ### 행동
 
-재고 차감을 수량 조건이 포함된 단일 UPDATE로 바꾸고 영향 행이 0이면 재고 부족으로 처리했다. 예약 생성과 확정에는 요청 fingerprint 기반 멱등키를 적용했다. 만료와 Outbox 폴링은 작은 batch를 `SKIP LOCKED`로 선점하고 처리 임대와 지수 백오프를 추가했다. 대안은 ADR에 남기고 경쟁 요청·롤백·중복 전달을 자동 테스트로 재현했다.
+재고 차감을 수량 조건이 포함된 단일 UPDATE로 바꾸고 영향 행이 0이면 재고 부족으로 처리했다. 예약 생성과 확정에는 요청 fingerprint 기반 멱등키를 적용했다. 만료·Outbox·결제 대사 배치는 작은 batch를 `SKIP LOCKED`로 선점하고 처리 임대와 지수 백오프를 추가했다. PG 조회 전에 선점 트랜잭션을 종료하고 경쟁 작업자·임대 만료·중복 전달을 자동 테스트로 재현했다.
 
 ### 결과
 

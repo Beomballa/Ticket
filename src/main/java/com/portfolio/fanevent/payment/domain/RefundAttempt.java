@@ -49,6 +49,18 @@ public class RefundAttempt {
     @Column(name = "resolved_at")
     private Instant resolvedAt;
 
+    @Column(name = "reconciliation_attempts", nullable = false)
+    private int reconciliationAttempts;
+
+    @Column(name = "next_reconciliation_at")
+    private Instant nextReconciliationAt;
+
+    @Column(name = "reconciliation_lease_until")
+    private Instant reconciliationLeaseUntil;
+
+    @Column(name = "last_reconciliation_at")
+    private Instant lastReconciliationAt;
+
     @Version
     @Column(nullable = false)
     private long version;
@@ -112,6 +124,7 @@ public class RefundAttempt {
         this.lastError = null;
         this.resolvedAt = resolvedAt;
         this.updatedAt = resolvedAt;
+        clearReconciliationSchedule();
     }
 
     public void decline(String message, Instant resolvedAt) {
@@ -120,6 +133,7 @@ public class RefundAttempt {
         this.lastError = message;
         this.resolvedAt = resolvedAt;
         this.updatedAt = resolvedAt;
+        clearReconciliationSchedule();
     }
 
     public void markUnknown(String message, Instant occurredAt) {
@@ -129,12 +143,19 @@ public class RefundAttempt {
         this.status = RefundAttemptStatus.UNKNOWN;
         this.lastError = message;
         this.updatedAt = occurredAt;
+        this.nextReconciliationAt = occurredAt;
+        this.reconciliationLeaseUntil = null;
     }
 
     private void requireUnresolved() {
         if (status == RefundAttemptStatus.SUCCEEDED || status == RefundAttemptStatus.DECLINED) {
             throw new IllegalStateException("이미 완료된 환불 시도입니다.");
         }
+    }
+
+    private void clearReconciliationSchedule() {
+        this.nextReconciliationAt = null;
+        this.reconciliationLeaseUntil = null;
     }
 
     public UUID getId() {

@@ -21,9 +21,11 @@ public class MockPaymentGateway implements PaymentGateway {
     public static final String APPROVED_TOKEN = "mock-approved";
     public static final String TIMEOUT_APPROVED_TOKEN = "mock-timeout-approved";
     public static final String TIMEOUT_DECLINED_TOKEN = "mock-timeout-declined";
+    public static final String TIMEOUT_UNKNOWN_TOKEN = "mock-timeout-unknown";
     public static final String REFUND_DECLINED_TOKEN = "mock-refund-declined";
     public static final String REFUND_TIMEOUT_SUCCEEDED_TOKEN = "mock-refund-timeout-succeeded";
     public static final String REFUND_TIMEOUT_DECLINED_TOKEN = "mock-refund-timeout-declined";
+    public static final String REFUND_TIMEOUT_UNKNOWN_TOKEN = "mock-refund-timeout-unknown";
 
     private final Map<String, PaymentGatewayResult> results = new ConcurrentHashMap<>();
     private final Map<Long, RefundScenario> refundScenarios = new ConcurrentHashMap<>();
@@ -46,6 +48,10 @@ public class MockPaymentGateway implements PaymentGateway {
         }
         if (TIMEOUT_DECLINED_TOKEN.equals(paymentToken)) {
             results.put(gatewayIdempotencyKey, PaymentGatewayResult.DECLINED);
+            throw new PaymentGatewayTimeoutException();
+        }
+        if (TIMEOUT_UNKNOWN_TOKEN.equals(paymentToken)) {
+            results.put(gatewayIdempotencyKey, PaymentGatewayResult.UNKNOWN);
             throw new PaymentGatewayTimeoutException();
         }
         RefundScenario refundScenario = refundScenario(paymentToken);
@@ -92,6 +98,10 @@ public class MockPaymentGateway implements PaymentGateway {
             refundResults.put(gatewayIdempotencyKey, RefundGatewayResult.DECLINED);
             throw new RefundGatewayTimeoutException();
         }
+        if (scenario == RefundScenario.TIMEOUT_UNKNOWN) {
+            refundResults.put(gatewayIdempotencyKey, RefundGatewayResult.UNKNOWN);
+            throw new RefundGatewayTimeoutException();
+        }
         if (scenario == RefundScenario.DECLINED) {
             refundResults.put(gatewayIdempotencyKey, RefundGatewayResult.DECLINED);
             throw new RefundDeclinedException();
@@ -132,6 +142,7 @@ public class MockPaymentGateway implements PaymentGateway {
             case REFUND_DECLINED_TOKEN -> RefundScenario.DECLINED;
             case REFUND_TIMEOUT_SUCCEEDED_TOKEN -> RefundScenario.TIMEOUT_SUCCEEDED;
             case REFUND_TIMEOUT_DECLINED_TOKEN -> RefundScenario.TIMEOUT_DECLINED;
+            case REFUND_TIMEOUT_UNKNOWN_TOKEN -> RefundScenario.TIMEOUT_UNKNOWN;
             default -> null;
         };
     }
@@ -159,6 +170,7 @@ public class MockPaymentGateway implements PaymentGateway {
         SUCCEEDED,
         DECLINED,
         TIMEOUT_SUCCEEDED,
-        TIMEOUT_DECLINED
+        TIMEOUT_DECLINED,
+        TIMEOUT_UNKNOWN
     }
 }

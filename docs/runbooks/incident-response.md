@@ -101,13 +101,15 @@ Authorization: Bearer <admin-token>
 
 - API가 `409 PAYMENT_RESULT_UNKNOWN`과 `paymentAttemptId`를 반환
 - `fan_event_payment_reconciliation_total{result="unknown"}` 증가
+- `fan_event_payment_reconciliation_backlog`과 `fan_event_payment_reconciliation_oldest_age_seconds` 증가
 - 관리자 결과 불명 목록에 오래된 시도가 누적
 
 ### 즉시 대응
 
 1. 오류 응답의 `traceId`와 `paymentAttemptId`로 승인 요청 로그를 확인한다.
 2. 관리자 API에서 결제 시도의 예약 ID, 금액, 요청 시각을 확인한다. 저장된 fingerprint를 결제 토큰처럼 사용하지 않는다.
-3. PG 장애와 조회 API 상태를 확인한 뒤 단건 대사를 실행한다.
+3. `fan_event_reconciliation_automatic_total{type="payment"}`의 `resolved`, `pending`, `failed` 추이와 PG 조회 API 상태를 확인한다.
+4. 자동 대사 임대가 30초 뒤 회수되고 재시도 간격이 최대 10분 안에서 증가하는지 확인한다. 긴급 건은 단건 대사를 실행한다.
 
 ```http
 GET /api/admin/payment-attempts/unknown?page=0&size=20
@@ -117,8 +119,8 @@ POST /api/admin/payment-attempts/{paymentAttemptId}/reconcile
 Authorization: Bearer <admin-token>
 ```
 
-4. `resolved=false`이면 PG 결과가 아직 없다는 뜻이므로 `UNKNOWN`을 유지한다. 승인 API를 새 키로 반복 호출하지 않는다.
-5. 승인으로 확인됐지만 예약이 이미 만료·취소돼 자동 확정할 수 없으면 환불·재고 영향을 확인하고 수동 보상 사건으로 전환한다.
+5. `resolved=false`이면 PG 결과가 아직 없다는 뜻이므로 `UNKNOWN`을 유지한다. 승인 API를 새 키로 반복 호출하지 않는다.
+6. 승인으로 확인됐지만 예약이 이미 만료·취소돼 자동 확정할 수 없으면 환불·재고 영향을 확인하고 수동 보상 사건으로 전환한다.
 
 ### 복구 판정
 
@@ -132,13 +134,15 @@ Authorization: Bearer <admin-token>
 
 - API가 `409 REFUND_RESULT_UNKNOWN`과 `refundAttemptId`를 반환
 - `fan_event_refund_reconciliation_total{result="unknown"}` 증가
+- `fan_event_refund_reconciliation_backlog`과 `fan_event_refund_reconciliation_oldest_age_seconds` 증가
 - 관리자 환불 결과 불명 목록에 오래된 시도가 누적
 
 ### 즉시 대응
 
 1. 오류 응답의 `traceId`와 `refundAttemptId`로 환불 요청 로그를 확인한다.
 2. 관리자 API에서 예약 ID, 원 결제 시도 ID, 금액과 요청 시각을 확인한다.
-3. PG 환불 조회 API가 정상인지 확인한 뒤 단건 대사를 실행한다.
+3. `fan_event_reconciliation_automatic_total{type="refund"}`의 `resolved`, `pending`, `failed` 추이와 PG 환불 조회 API 상태를 확인한다.
+4. 자동 대사 임대가 30초 뒤 회수되고 재시도 간격이 최대 10분 안에서 증가하는지 확인한다. 긴급 건은 단건 대사를 실행한다.
 
 ```http
 GET /api/admin/refund-attempts/unknown?page=0&size=20
@@ -148,8 +152,8 @@ POST /api/admin/refund-attempts/{refundAttemptId}/reconcile
 Authorization: Bearer <admin-token>
 ```
 
-4. `resolved=false`이면 PG 결과가 아직 없으므로 `UNKNOWN`을 유지한다. 새 키로 환불을 다시 호출하거나 DB에서 예약을 직접 취소하지 않는다.
-5. 거절로 확인되면 예약 `CONFIRMED`와 선점 재고를 유지하고 고객 안내 또는 PG 거절 원인 해소 절차로 전환한다.
+5. `resolved=false`이면 PG 결과가 아직 없으므로 `UNKNOWN`을 유지한다. 새 키로 환불을 다시 호출하거나 DB에서 예약을 직접 취소하지 않는다.
+6. 거절로 확인되면 예약 `CONFIRMED`와 선점 재고를 유지하고 고객 안내 또는 PG 거절 원인 해소 절차로 전환한다.
 
 ### 복구 판정
 
@@ -160,7 +164,7 @@ Authorization: Bearer <admin-token>
 
 ## 초기 경보 기준
 
-`observability/alerts/fan-event-alerts.yml`은 전체 API p95 500ms, 5xx 5%, Outbox active backlog 100건, Outbox 지속 실패, 예약 rate-limit 거부 20%를 초기 기준으로 사용한다. 경보가 발생하면 단일 순간값이 아니라 설정된 5~10분 지속 여부와 URI별 지표를 먼저 확인한다.
+`observability/alerts/fan-event-alerts.yml`은 전체 API p95 500ms, 5xx 5%, Outbox active backlog 100건, Outbox 지속 실패, 예약 rate-limit 거부 20%, 결제·환불 `UNKNOWN` 최장 체류 5분을 초기 기준으로 사용한다. 경보가 발생하면 단일 순간값이 아니라 설정된 5~10분 지속 여부와 URI별 지표를 먼저 확인한다.
 
 이 임계값은 로컬 k6 기준선에서 출발한 값이다. 운영 SLO와 실제 트래픽 분포를 확보한 뒤 경보 민감도와 지속 시간을 조정하고 변경 근거를 사건·용량 계획 문서에 남긴다.
 

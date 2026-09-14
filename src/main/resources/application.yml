@@ -77,6 +77,16 @@ app:
     max-attempts: 5
     base-retry-delay: PT1S
     max-retry-delay: PT1M
+  payment:
+    reconciliation:
+      enabled: true
+      initial-delay: PT30S
+      fixed-delay: PT10S
+      batch-size: 20
+      processing-timeout: PT30S
+      base-retry-delay: PT10S
+      max-retry-delay: PT10M
+      metrics-interval: PT10S
   reservation:
     hold-ttl: PT10M
     expiration:

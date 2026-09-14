@@ -16,6 +16,10 @@ public class OperationalMetrics {
     private final AtomicLong pendingOutbox = new AtomicLong();
     private final AtomicLong failedOutbox = new AtomicLong();
     private final AtomicLong processingOutbox = new AtomicLong();
+    private final AtomicLong paymentReconciliationBacklog = new AtomicLong();
+    private final AtomicLong paymentReconciliationOldestAgeSeconds = new AtomicLong();
+    private final AtomicLong refundReconciliationBacklog = new AtomicLong();
+    private final AtomicLong refundReconciliationOldestAgeSeconds = new AtomicLong();
 
     public OperationalMetrics(MeterRegistry registry) {
         this.registry = registry;
@@ -25,6 +29,18 @@ public class OperationalMetrics {
                 .tag("status", "failed").register(registry);
         Gauge.builder("fan.event.outbox.backlog", processingOutbox, AtomicLong::get)
                 .tag("status", "processing").register(registry);
+        Gauge.builder("fan.event.payment.reconciliation.backlog",
+                        paymentReconciliationBacklog, AtomicLong::get)
+                .register(registry);
+        Gauge.builder("fan.event.payment.reconciliation.oldest.age.seconds",
+                        paymentReconciliationOldestAgeSeconds, AtomicLong::get)
+                .register(registry);
+        Gauge.builder("fan.event.refund.reconciliation.backlog",
+                        refundReconciliationBacklog, AtomicLong::get)
+                .register(registry);
+        Gauge.builder("fan.event.refund.reconciliation.oldest.age.seconds",
+                        refundReconciliationOldestAgeSeconds, AtomicLong::get)
+                .register(registry);
     }
 
     public void cache(String result) {
@@ -51,6 +67,10 @@ public class OperationalMetrics {
         increment("fan.event.refund.reconciliation", "result", result);
     }
 
+    public void automaticReconciliation(String type, String result) {
+        increment("fan.event.reconciliation.automatic", "type", type, "result", result);
+    }
+
     public void expired(int count) {
         registry.counter("fan.event.reservation.expired").increment(count);
     }
@@ -65,10 +85,41 @@ public class OperationalMetrics {
         processingOutbox.set(processing);
     }
 
+    public void updateReconciliationBacklog(
+            long paymentCount,
+            long paymentOldestAgeSeconds,
+            long refundCount,
+            long refundOldestAgeSeconds
+    ) {
+        paymentReconciliationBacklog.set(paymentCount);
+        this.paymentReconciliationOldestAgeSeconds.set(paymentOldestAgeSeconds);
+        refundReconciliationBacklog.set(refundCount);
+        this.refundReconciliationOldestAgeSeconds.set(refundOldestAgeSeconds);
+    }
+
     private void increment(String name, String tagName, String tagValue) {
         counters.computeIfAbsent(
                         name + ':' + tagValue,
                         ignored -> registry.counter(name, tagName, tagValue))
+                .increment();
+    }
+
+    private void increment(
+            String name,
+            String firstTagName,
+            String firstTagValue,
+            String secondTagName,
+            String secondTagValue
+    ) {
+        String key = name + ':' + firstTagValue + ':' + secondTagValue;
+        counters.computeIfAbsent(
+                        key,
+                        ignored -> registry.counter(
+                                name,
+                                firstTagName,
+                                firstTagValue,
+                                secondTagName,
+                                secondTagValue))
                 .increment();
     }
 }

@@ -31,13 +31,18 @@ import com.portfolio.fanevent.member.infrastructure.MemberRepository;
 import com.portfolio.fanevent.outbox.application.OutboxPublisher;
 import com.portfolio.fanevent.outbox.infrastructure.ReservationAuditOutboxHandler;
 import com.portfolio.fanevent.payment.application.PaymentGateway;
+import com.portfolio.fanevent.payment.application.AutomaticReconciliationService;
+import com.portfolio.fanevent.payment.application.ReconciliationCandidate;
+import com.portfolio.fanevent.payment.infrastructure.ReconciliationLeaseRepository;
 import com.portfolio.fanevent.reservation.application.ReservationExpirationService;
+import com.portfolio.fanevent.support.observability.ReconciliationBacklogMonitor;
 import com.portfolio.fanevent.support.persistence.QBaseEntity;
 import com.portfolio.fanevent.support.security.JwtProperties;
 import com.querydsl.jpa.impl.JPAQueryFactory;
 import jakarta.persistence.EntityManagerFactory;
 import java.math.BigDecimal;
 import java.time.Instant;
+import java.time.Duration;
 import java.time.temporal.ChronoUnit;
 import java.util.ArrayList;
 import java.util.HashSet;
@@ -79,7 +84,8 @@ import org.testcontainers.utility.DockerImageName;
 @SpringBootTest(properties = {
 		"spring.jpa.properties.hibernate.generate_statistics=true",
 		"app.reservation.expiration.initial-delay=PT1H",
-		"app.outbox.initial-delay=PT1H"
+		"app.outbox.initial-delay=PT1H",
+		"app.payment.reconciliation.initial-delay=PT1H"
 })
 @Testcontainers
 @AutoConfigureMockMvc
@@ -140,6 +146,15 @@ class FanEventPlatformApplicationTests {
 
 	@Autowired
 	private AdminOutboxService adminOutboxService;
+
+	@Autowired
+	private AutomaticReconciliationService automaticReconciliationService;
+
+	@Autowired
+	private ReconciliationBacklogMonitor reconciliationBacklogMonitor;
+
+	@Autowired
+	private ReconciliationLeaseRepository reconciliationLeaseRepository;
 
 	@MockitoSpyBean
 	private PaymentGateway paymentGateway;
@@ -1012,6 +1027,161 @@ class FanEventPlatformApplicationTests {
 	}
 
 	@Test
+	void automaticPaymentReconciliationIsClaimedOnceAcrossConcurrentWorkers() throws Exception {
+		String accessToken = login(signupUniqueMember("자동 결제 대사 회원"), "secure-password");
+		Long inventoryId = createOnSaleInventory(2, new BigDecimal("29000.00"));
+		Long reservationId = holdReservation(accessToken, inventoryId, 1);
+
+		mockMvc.perform(post("/api/reservations/{reservationId}/confirm", reservationId)
+				.header("Authorization", "Bearer " + accessToken)
+				.header("Idempotency-Key", UUID.randomUUID().toString())
+				.contentType(APPLICATION_JSON)
+				.content(objectMapper.writeValueAsString(Map.of(
+						"paymentToken", "mock-timeout-approved"))))
+				.andExpect(status().isConflict());
+
+		UUID attemptId = jdbcTemplate.queryForObject("""
+				SELECT id FROM payment_attempts WHERE reservation_id = ?
+				""", UUID.class, reservationId);
+		ExecutorService executor = Executors.newFixedThreadPool(2);
+		CountDownLatch start = new CountDownLatch(1);
+		try {
+			Future<Integer> first = executor.submit(() -> {
+				start.await();
+				return automaticReconciliationService.reconcileNextBatch();
+			});
+			Future<Integer> second = executor.submit(() -> {
+				start.await();
+				return automaticReconciliationService.reconcileNextBatch();
+			});
+			start.countDown();
+			assertThat(first.get(10, TimeUnit.SECONDS) + second.get(10, TimeUnit.SECONDS))
+					.isEqualTo(1);
+		} finally {
+			executor.shutdownNow();
+		}
+
+		assertThat(reservationStatus(reservationId)).isEqualTo("CONFIRMED");
+		assertThat(inventoryQuantity(inventoryId)).isEqualTo(1);
+		assertThat(outboxCount(reservationId, "RESERVATION_CONFIRMED")).isEqualTo(1);
+		Map<String, Object> attempt = jdbcTemplate.queryForMap("""
+				SELECT status, reconciliation_attempts, reconciliation_lease_until,
+				       next_reconciliation_at
+				FROM payment_attempts WHERE id = ?
+				""", attemptId);
+		assertThat(attempt.get("status")).isEqualTo("APPROVED");
+		assertThat(((Number) attempt.get("reconciliation_attempts")).intValue()).isEqualTo(1);
+		assertThat(attempt.get("reconciliation_lease_until")).isNull();
+		assertThat(attempt.get("next_reconciliation_at")).isNull();
+		assertThat(jdbcTemplate.queryForObject("""
+				SELECT count(*) FROM audit_logs
+				WHERE action = 'PAYMENT_RECONCILED'
+				  AND target_id = ?
+				  AND details ->> 'adminSubject' = 'system:auto-reconciliation'
+				""", Integer.class, attemptId.toString())).isEqualTo(1);
+	}
+
+	@Test
+	void automaticPaymentReconciliationUsesBackoffAndRecoversExpiredLease() throws Exception {
+		String accessToken = login(signupUniqueMember("자동 대사 재시도 회원"), "secure-password");
+		Long inventoryId = createOnSaleInventory(2, new BigDecimal("29500.00"));
+		Long reservationId = holdReservation(accessToken, inventoryId, 1);
+
+		mockMvc.perform(post("/api/reservations/{reservationId}/confirm", reservationId)
+				.header("Authorization", "Bearer " + accessToken)
+				.header("Idempotency-Key", UUID.randomUUID().toString())
+				.contentType(APPLICATION_JSON)
+				.content(objectMapper.writeValueAsString(Map.of(
+						"paymentToken", "mock-timeout-unknown"))))
+				.andExpect(status().isConflict());
+
+		UUID attemptId = jdbcTemplate.queryForObject("""
+				SELECT id FROM payment_attempts WHERE reservation_id = ?
+				""", UUID.class, reservationId);
+		assertThat(automaticReconciliationService.reconcileNextBatch()).isEqualTo(1);
+		Map<String, Object> rescheduled = jdbcTemplate.queryForMap("""
+				SELECT status, reconciliation_attempts, last_reconciliation_at,
+				       next_reconciliation_at, reconciliation_lease_until
+				FROM payment_attempts WHERE id = ?
+				""", attemptId);
+		assertThat(rescheduled.get("status")).isEqualTo("UNKNOWN");
+		assertThat(((Number) rescheduled.get("reconciliation_attempts")).intValue()).isEqualTo(1);
+		assertThat(rescheduled.get("reconciliation_lease_until")).isNull();
+		assertThat((java.sql.Timestamp) rescheduled.get("next_reconciliation_at"))
+				.isAfter((java.sql.Timestamp) rescheduled.get("last_reconciliation_at"));
+		assertThat(automaticReconciliationService.reconcileNextBatch()).isZero();
+
+		jdbcTemplate.update("""
+				UPDATE payment_attempts
+				SET next_reconciliation_at = CURRENT_TIMESTAMP - INTERVAL '1 minute',
+				    reconciliation_lease_until = CURRENT_TIMESTAMP + INTERVAL '1 minute'
+				WHERE id = ?
+				""", attemptId);
+		automaticReconciliationService.reconcileNextBatch();
+		assertThat(jdbcTemplate.queryForObject(
+				"SELECT reconciliation_attempts FROM payment_attempts WHERE id = ?",
+				Integer.class, attemptId)).isEqualTo(1);
+
+		jdbcTemplate.update("""
+				UPDATE payment_attempts
+				SET reconciliation_lease_until = CURRENT_TIMESTAMP - INTERVAL '1 second'
+				WHERE id = ?
+				""", attemptId);
+		assertThat(automaticReconciliationService.reconcileNextBatch()).isEqualTo(1);
+		assertThat(jdbcTemplate.queryForObject(
+				"SELECT reconciliation_attempts FROM payment_attempts WHERE id = ?",
+				Integer.class, attemptId)).isEqualTo(2);
+
+		reconciliationBacklogMonitor.refresh();
+		mockMvc.perform(get("/actuator/prometheus"))
+				.andExpect(content().string(containsString(
+						"fan_event_payment_reconciliation_backlog")))
+				.andExpect(content().string(containsString(
+						"fan_event_payment_reconciliation_oldest_age_seconds")))
+				.andExpect(content().string(containsString(
+						"fan_event_reconciliation_automatic_total")));
+	}
+
+	@Test
+	void expiredReconciliationWorkerCannotClearNewOwnersLease() throws Exception {
+		String accessToken = login(signupUniqueMember("대사 임대 소유권 회원"), "secure-password");
+		Long inventoryId = createOnSaleInventory(1, new BigDecimal("29700.00"));
+		Long reservationId = holdReservation(accessToken, inventoryId, 1);
+
+		mockMvc.perform(post("/api/reservations/{reservationId}/confirm", reservationId)
+				.header("Authorization", "Bearer " + accessToken)
+				.header("Idempotency-Key", UUID.randomUUID().toString())
+				.contentType(APPLICATION_JSON)
+				.content(objectMapper.writeValueAsString(Map.of(
+						"paymentToken", "mock-timeout-unknown"))))
+				.andExpect(status().isConflict());
+
+		ReconciliationCandidate staleOwner = reconciliationLeaseRepository
+				.claimPayments(1, Duration.ofSeconds(30)).getFirst();
+		jdbcTemplate.update("""
+				UPDATE payment_attempts
+				SET reconciliation_lease_until = CURRENT_TIMESTAMP - INTERVAL '1 second'
+				WHERE id = ?
+				""", staleOwner.attemptId());
+		ReconciliationCandidate currentOwner = reconciliationLeaseRepository
+				.claimPayments(1, Duration.ofSeconds(30)).getFirst();
+
+		reconciliationLeaseRepository.completePayment(staleOwner, Duration.ofSeconds(10));
+		Map<String, Object> stillOwned = jdbcTemplate.queryForMap("""
+				SELECT reconciliation_attempts, reconciliation_lease_until
+				FROM payment_attempts WHERE id = ?
+				""", staleOwner.attemptId());
+		assertThat(((Number) stillOwned.get("reconciliation_attempts")).intValue()).isEqualTo(2);
+		assertThat(stillOwned.get("reconciliation_lease_until")).isNotNull();
+
+		reconciliationLeaseRepository.completePayment(currentOwner, Duration.ofSeconds(10));
+		assertThat(jdbcTemplate.queryForObject("""
+				SELECT reconciliation_lease_until IS NULL
+				FROM payment_attempts WHERE id = ?
+				""", Boolean.class, staleOwner.attemptId())).isTrue();
+	}
+
+	@Test
 	void pendingCancellationReturnsInventoryOnceWithoutRefund() throws Exception {
 		String accessToken = login(signupUniqueMember("선점 취소 회원"), "secure-password");
 		Long inventoryId = createOnSaleInventory(5, new BigDecimal("13000.00"));
@@ -1163,6 +1333,35 @@ class FanEventPlatformApplicationTests {
 		assertThat(jdbcTemplate.queryForObject("""
 				SELECT count(*) FROM audit_logs
 				WHERE action = 'REFUND_RECONCILED' AND target_id = ?
+				""", Integer.class, attemptId.toString())).isEqualTo(1);
+	}
+
+	@Test
+	void automaticRefundReconciliationCompletesCancellationOnce() throws Exception {
+		String accessToken = login(signupUniqueMember("자동 환불 대사 회원"), "secure-password");
+		Long inventoryId = createOnSaleInventory(2, new BigDecimal("32500.00"));
+		Long reservationId = holdReservation(accessToken, inventoryId, 1);
+		confirmReservation(accessToken, reservationId, "mock-refund-timeout-succeeded");
+
+		mockMvc.perform(post("/api/reservations/{reservationId}/cancel", reservationId)
+				.header("Authorization", "Bearer " + accessToken))
+				.andExpect(status().isConflict());
+		UUID attemptId = jdbcTemplate.queryForObject("""
+				SELECT id FROM refund_attempts WHERE reservation_id = ?
+				""", UUID.class, reservationId);
+
+		assertThat(automaticReconciliationService.reconcileNextBatch()).isEqualTo(1);
+		assertThat(reservationStatus(reservationId)).isEqualTo("CANCELLED");
+		assertThat(inventoryQuantity(inventoryId)).isEqualTo(2);
+		assertThat(outboxCount(reservationId, "RESERVATION_CANCELLED")).isEqualTo(1);
+		assertThat(jdbcTemplate.queryForObject(
+				"SELECT status FROM refund_attempts WHERE id = ?",
+				String.class, attemptId)).isEqualTo("SUCCEEDED");
+		assertThat(jdbcTemplate.queryForObject("""
+				SELECT count(*) FROM audit_logs
+				WHERE action = 'REFUND_RECONCILED'
+				  AND target_id = ?
+				  AND details ->> 'adminSubject' = 'system:auto-reconciliation'
 				""", Integer.class, attemptId.toString())).isEqualTo(1);
 	}
 

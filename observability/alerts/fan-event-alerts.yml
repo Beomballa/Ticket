@@ -55,3 +55,21 @@ groups:
         annotations:
           summary: 예약 생성 요청 중 속도 제한 비율이 20%를 초과했습니다.
           runbook: docs/runbooks/incident-response.md
+
+      - alert: FanEventPaymentReconciliationStale
+        expr: fan_event_payment_reconciliation_oldest_age_seconds > 300
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: 결제 결과 불명 건이 5분 넘게 해소되지 않고 있습니다.
+          runbook: docs/runbooks/incident-response.md
+
+      - alert: FanEventRefundReconciliationStale
+        expr: fan_event_refund_reconciliation_oldest_age_seconds > 300
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: 환불 결과 불명 건이 5분 넘게 해소되지 않고 있습니다.
+          runbook: docs/runbooks/incident-response.md

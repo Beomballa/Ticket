@@ -110,6 +110,13 @@ API에는 `409 PAYMENT_RESULT_UNKNOWN`을 반환한다. 관리자는
 `POST /api/admin/refund-attempts/{refundAttemptId}/reconcile`로 결과를 대사한다. 성공이 확인된 경우에만
 예약 취소·재고 반환·Outbox·감사 로그를 함께 반영한다.
 
+결제·환불 `UNKNOWN` 원장은 기본 10초마다 최대 20건씩 자동 대사한다. 짧은 DB 트랜잭션이
+`FOR UPDATE SKIP LOCKED`로 대상을 선점하고 30초 처리 임대를 남긴 뒤 선점 트랜잭션을 종료하므로,
+PG 조회 중에는 선점 잠금을 점유하지 않는다. 아직 결과가 없거나 조회가 실패하면 10초부터 최대
+10분까지 지수 백오프로 재예약한다.
+프로세스가 중단돼도 임대 만료 뒤 다른 인스턴스가 이어받으며, 수동 관리자 API는 비상 복구 경로로
+계속 사용할 수 있다. 간격과 배치 크기는 `app.payment.reconciliation.*`에서 조정한다.
+
 인증 사용자는 `GET /api/reservations`에서 상태·생성 기간별로 자신의 예약만 조회하고,
 `GET /api/reservations/{id}`에서 공연·회차·재고·수량과 요청 당시 가격 스냅샷을 확인한다.
 목록은 QueryDSL 집계 Projection으로 본문과 count를 각각 한 번 실행하고, 상세는 소유권을 포함한
@@ -205,6 +212,7 @@ bundle 생성을 실행한다. Gitleaks는 현재 파일만이 아니라 전체 
 - [ADR-0017: 전체 Git 이력 비밀정보 검사](docs/adr/0017-git-secret-scanning.md)
 - [ADR-0018: 결제 시도 원장과 결과 불명 대사](docs/adr/0018-payment-attempt-reconciliation.md)
 - [ADR-0019: 환불 시도 원장과 결과 불명 대사](docs/adr/0019-refund-attempt-reconciliation.md)
+- [ADR-0020: 결과 불명 자동 대사 임대와 백오프](docs/adr/0020-automatic-reconciliation.md)
 - [이벤트 목록 조회 기준선](docs/performance/event-list-baseline.md)
 - [관리자 조회 실행 계획](docs/performance/admin-query-plan.md)
 - [offset과 커서 페이지네이션 비교](docs/performance/reservation-pagination-comparison.md)
