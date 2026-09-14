@@ -16,6 +16,7 @@ public class MockPaymentGateway implements PaymentGateway {
 
     public static final String APPROVED_TOKEN = "mock-approved";
     public static final String TIMEOUT_APPROVED_TOKEN = "mock-timeout-approved";
+    public static final String TIMEOUT_DECLINED_TOKEN = "mock-timeout-declined";
 
     private final Map<String, PaymentGatewayResult> results = new ConcurrentHashMap<>();
 
@@ -32,6 +33,10 @@ public class MockPaymentGateway implements PaymentGateway {
         }
         if (TIMEOUT_APPROVED_TOKEN.equals(paymentToken)) {
             results.put(gatewayIdempotencyKey, PaymentGatewayResult.APPROVED);
+            throw new PaymentGatewayTimeoutException();
+        }
+        if (TIMEOUT_DECLINED_TOKEN.equals(paymentToken)) {
+            results.put(gatewayIdempotencyKey, PaymentGatewayResult.DECLINED);
             throw new PaymentGatewayTimeoutException();
         }
         if (!APPROVED_TOKEN.equals(paymentToken)) {

@@ -968,6 +968,41 @@ class FanEventPlatformApplicationTests {
 	}
 
 	@Test
+	@WithMockUser(username = "admin-test", roles = "ADMIN")
+	void unknownDeclinedPaymentKeepsReservationPendingAfterReconciliation() throws Exception {
+		String accessToken = login(signupUniqueMember("결제 거절 대사 회원"), "secure-password");
+		Long inventoryId = createOnSaleInventory(2, new BigDecimal("28000.00"));
+		Long reservationId = holdReservation(accessToken, inventoryId, 1);
+
+		mockMvc.perform(post("/api/reservations/{reservationId}/confirm", reservationId)
+				.header("Authorization", "Bearer " + accessToken)
+				.header("Idempotency-Key", UUID.randomUUID().toString())
+				.contentType(APPLICATION_JSON)
+				.content(objectMapper.writeValueAsString(Map.of(
+						"paymentToken", "mock-timeout-declined"))))
+				.andExpect(status().isConflict())
+				.andExpect(jsonPath("$.code").value("PAYMENT_RESULT_UNKNOWN"));
+
+		UUID attemptId = jdbcTemplate.queryForObject("""
+				SELECT id FROM payment_attempts WHERE reservation_id = ?
+				""", UUID.class, reservationId);
+		mockMvc.perform(post(
+				"/api/admin/payment-attempts/{paymentAttemptId}/reconcile", attemptId))
+				.andExpect(status().isOk())
+				.andExpect(jsonPath("$.paymentStatus").value("DECLINED"))
+				.andExpect(jsonPath("$.reservationStatus").value("PENDING"))
+				.andExpect(jsonPath("$.resolved").value(true));
+
+		assertThat(reservationStatus(reservationId)).isEqualTo("PENDING");
+		assertThat(inventoryQuantity(inventoryId)).isEqualTo(1);
+		assertThat(outboxCount(reservationId, "RESERVATION_CONFIRMED")).isZero();
+		assertThat(jdbcTemplate.queryForObject("""
+				SELECT count(*) FROM audit_logs
+				WHERE action = 'PAYMENT_RECONCILED' AND target_id = ?
+				""", Integer.class, attemptId.toString())).isEqualTo(1);
+	}
+
+	@Test
 	void pendingCancellationReturnsInventoryOnceWithoutRefund() throws Exception {
 		String accessToken = login(signupUniqueMember("선점 취소 회원"), "secure-password");
 		Long inventoryId = createOnSaleInventory(5, new BigDecimal("13000.00"));
