@@ -38,7 +38,9 @@ docker compose up -d
 실행 중인 API 계약은 `http://localhost:8080/swagger-ui.html`에서 탐색한다. JSON 계약은 전체
 `/v3/api-docs`와 대상별 `/v3/api-docs/public`, `/v3/api-docs/member`, `/v3/api-docs/admin`으로
 제공한다. 회원·관리자 문서에는 JWT bearer 인증 요구 사항이 표시되며 로그인·이벤트 조회는
-인증 없는 계약으로 유지된다. 운영에서는 다음 설정으로 문서 노출을 끄거나 내부망으로 제한한다.
+인증 없는 계약으로 유지된다. 각 엔드포인트에는 실제 예외 흐름에 맞는 400·401·403·404·409·422·429
+응답과 `ApiError` 예시가 연결되며, 예약 속도 제한의 429 응답에는 `Retry-After` 헤더도 표시된다.
+운영에서는 다음 설정으로 문서 노출을 끄거나 내부망으로 제한한다.
 
 ```bash
 export SPRINGDOC_API_DOCS_ENABLED=false
