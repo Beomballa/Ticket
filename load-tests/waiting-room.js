@@ -19,8 +19,31 @@ export const options = {
 const jsonHeaders = { 'Content-Type': 'application/json' }
 
 export function setup() {
-  const eventId = Number(__ENV.EVENT_ID)
-  if (!eventId) throw new Error('EVENT_ID가 필요합니다.')
+  let eventId = Number(__ENV.EVENT_ID)
+  if (!eventId) {
+    const catalog = http.get(`${baseUrl}/api/events?status=ON_SALE&keyword=Load%20Test&size=10`)
+    check(catalog, { 'load event is available': (response) => response.status === 200 })
+    eventId = Number(catalog.json('content.0.id'))
+  }
+  if (!eventId) throw new Error('Load Test 이벤트를 찾을 수 없습니다.')
+
+  const adminLogin = http.post(`${baseUrl}/api/auth/login`, JSON.stringify({
+    email: 'load-admin@stagepass.local', password: 'LoadPass123!',
+  }), { headers: jsonHeaders })
+  check(adminLogin, { 'admin login succeeds': (response) => response.status === 200 })
+  const adminToken = adminLogin.json('accessToken')
+  const configured = http.put(
+    `${baseUrl}/api/admin/events/${eventId}/waiting-room`,
+    JSON.stringify({
+      enabled: true,
+      batchSize: Math.min(5, users),
+      activeCapacity: users,
+      admissionTtl: 'PT2M',
+    }),
+    { headers: { ...jsonHeaders, Authorization: `Bearer ${adminToken}` } },
+  )
+  check(configured, { 'waiting room policy is configured': (response) => response.status === 204 })
+
   const tokens = []
   for (let number = 1; number <= users; number += 1) {
     const login = http.post(`${baseUrl}/api/auth/login`, JSON.stringify({
@@ -29,7 +52,7 @@ export function setup() {
     check(login, { 'login succeeds': (response) => response.status === 200 })
     tokens.push(login.json('accessToken'))
   }
-  return { eventId, tokens }
+  return { eventId, tokens, adminToken }
 }
 
 export default function (data) {
@@ -49,4 +72,11 @@ export default function (data) {
   admitted.add(entered ? 1 : 0)
   unexpected.add(!entered)
   check(status, { 'member is eventually admitted': () => entered })
+}
+
+export function teardown(data) {
+  const closed = http.del(`${baseUrl}/api/admin/events/${data.eventId}/waiting-room`, null, {
+    headers: { Authorization: `Bearer ${data.adminToken}` },
+  })
+  check(closed, { 'waiting room policy is closed': (response) => response.status === 204 })
 }

@@ -11,6 +11,17 @@ ON CONFLICT (email) DO UPDATE
 SET password_hash = EXCLUDED.password_hash,
     role = 'USER';
 
+INSERT INTO members (email, password_hash, name, role)
+VALUES (
+    'load-admin@stagepass.local',
+    '$2y$10$zZbQtXOhMIVHoLrfOnGue.gWY9gBFwr8pVjTteP73ubt.1goHjpoG',
+    'Load Admin',
+    'ADMIN'
+)
+ON CONFLICT (email) DO UPDATE
+SET password_hash = EXCLUDED.password_hash,
+    role = 'ADMIN';
+
 INSERT INTO artists (name, description)
 VALUES ('StagePass Load Artist', 'k6 전용 로컬 부하 테스트 데이터')
 ON CONFLICT (name) DO UPDATE SET description = EXCLUDED.description;
@@ -61,6 +72,28 @@ WHERE aggregate_type = 'RESERVATION'
 DELETE FROM audit_logs
 WHERE target_type = 'RESERVATION'
   AND target_id IN (SELECT id::text FROM load_reservations);
+DELETE FROM audit_logs
+WHERE target_type = 'REFUND_ATTEMPT'
+  AND target_id IN (
+    SELECT id::text FROM refund_attempts
+    WHERE reservation_id IN (SELECT id FROM load_reservations)
+  );
+DELETE FROM audit_logs
+WHERE target_type = 'PAYMENT_ATTEMPT'
+  AND target_id IN (
+    SELECT id::text FROM payment_attempts
+    WHERE reservation_id IN (SELECT id FROM load_reservations)
+  );
+DELETE FROM payment_webhook_inbox
+WHERE gateway_idempotency_key IN (
+    SELECT gateway_idempotency_key FROM refund_attempts
+    WHERE reservation_id IN (SELECT id FROM load_reservations)
+    UNION
+    SELECT gateway_idempotency_key FROM payment_attempts
+    WHERE reservation_id IN (SELECT id FROM load_reservations)
+);
+DELETE FROM refund_attempts WHERE reservation_id IN (SELECT id FROM load_reservations);
+DELETE FROM payment_attempts WHERE reservation_id IN (SELECT id FROM load_reservations);
 DELETE FROM reservation_items WHERE reservation_id IN (SELECT id FROM load_reservations);
 DELETE FROM idempotency_requests
 WHERE member_id IN (SELECT id FROM members WHERE email LIKE 'load-user-%@stagepass.local');
