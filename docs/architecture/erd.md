@@ -9,6 +9,7 @@ erDiagram
     MEMBERS ||--o{ AUDIT_LOGS : acts
     ARTISTS ||--o{ EVENTS : holds
     EVENTS ||--o{ EVENT_SESSIONS : has
+    EVENTS ||--o| EVENT_WAITING_ROOM_POLICIES : protected_by
     EVENT_SESSIONS ||--o{ SELLABLE_INVENTORY : exposes
     RESERVATIONS ||--|{ RESERVATION_ITEMS : contains
     RESERVATIONS ||--o{ PAYMENT_ATTEMPTS : pays
@@ -34,6 +35,15 @@ erDiagram
         bigint id PK
         bigint event_id FK
         timestamptz starts_at
+    }
+    EVENT_WAITING_ROOM_POLICIES {
+        bigint id PK
+        bigint event_id FK,UK
+        boolean enabled
+        integer batch_size
+        integer active_capacity
+        bigint admission_ttl_seconds
+        bigint version
     }
     SELLABLE_INVENTORY {
         bigint id PK
@@ -131,6 +141,7 @@ erDiagram
 - 자동 대사는 만료 가능한 처리 임대와 다음 실행 시각으로 다중 인스턴스 중복 조회와 장애 고착을 막는다.
 - 서명을 통과한 PG 웹훅은 event ID와 payload hash로 멱등성을 판정하고, Inbox 임대 시도 번호가 늦은 작업자의 상태 덮어쓰기를 막는다.
 - 만료 후 승인된 결제는 예약별 한 건인 `LATE_PAYMENT_COMPENSATION` 환불로 연결되며 예약·재고 상태를 변경하지 않고 금전 상태만 환불로 수렴시킨다.
+- 이벤트별 대기열 정책은 PostgreSQL을 원본으로 하며 배치 크기는 활성 입장 정원을 초과할 수 없다.
 - 만료 조회와 Outbox 폴링은 부분 인덱스로 활성 상태만 탐색한다.
 - Outbox 소비 이력은 소비자명·이벤트 ID 조합으로 유일해 DB 부작용의 중복 반영을 막는다.
 - 애플리케이션 상태 전이는 도메인 로직이, 값의 최소 안전선은 DB 제약조건이 보호한다.

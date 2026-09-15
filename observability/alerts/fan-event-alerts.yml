@@ -82,3 +82,12 @@ groups:
         annotations:
           summary: 늦은 승인 보상 환불이 5분 넘게 해소되지 않고 있습니다.
           runbook: docs/runbooks/incident-response.md
+
+      - alert: FanEventWaitingRoomPolicySyncFailure
+        expr: increase(fan_event_waiting_room_total{operation="policy_sync",result="redis_error"}[5m]) > 0
+        for: 2m
+        labels:
+          severity: warning
+        annotations:
+          summary: 대기열 영속 정책을 Redis 런타임에 동기화하지 못했습니다.
+          runbook: docs/runbooks/incident-response.md

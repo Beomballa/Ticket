@@ -81,12 +81,15 @@ export interface WaitingRoomEntry {
 
 export interface WaitingRoomSummary {
   eventId: number
+  eventTitle: string
   enabled: boolean
   waitingCount: number
   admittedCount: number
   batchSize: number
   activeCapacity: number
+  admissionTtlSeconds: number
   admittedLastMinute: number
+  redisStatus: 'SYNCHRONIZED' | 'MISSING' | 'STALE' | 'DISABLED' | 'UNAVAILABLE'
 }
 
 export interface ReservationSummary {

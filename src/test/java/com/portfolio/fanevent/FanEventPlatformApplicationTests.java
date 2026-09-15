@@ -195,11 +195,12 @@ class FanEventPlatformApplicationTests {
 				    'members', 'artists', 'events', 'event_sessions', 'sellable_inventory',
 				    'reservations', 'reservation_items', 'idempotency_requests',
 				    'outbox_events', 'consumed_outbox_events', 'audit_logs',
-				    'payment_attempts', 'refund_attempts', 'payment_webhook_inbox'
+				    'payment_attempts', 'refund_attempts', 'payment_webhook_inbox',
+				    'event_waiting_room_policies'
 				  )
 				""", Integer.class);
 
-		assertThat(tableCount).isEqualTo(14);
+		assertThat(tableCount).isEqualTo(15);
 	}
 
 	@Test
@@ -2417,12 +2418,33 @@ class FanEventPlatformApplicationTests {
 				WHERE inventory.id = ?
 				""", Long.class, inventoryId);
 		waitingRoomService.open(eventId);
+		Map<String, Object> policy = jdbcTemplate.queryForMap("""
+				SELECT enabled, batch_size, active_capacity, admission_ttl_seconds
+				FROM event_waiting_room_policies WHERE event_id = ?
+				""", eventId);
+		assertThat(policy.get("enabled")).isEqualTo(true);
+		assertThat(((Number) policy.get("batch_size")).intValue()).isEqualTo(50);
 
 		mockMvc.perform(post("/api/events/{eventId}/waiting-room", eventId)
 				.header("Authorization", "Bearer " + accessToken))
 				.andExpect(status().isOk())
 				.andExpect(jsonPath("$.status").value("WAITING"))
 				.andExpect(jsonPath("$.position").value(1));
+
+		redisTemplate.delete("waiting-room:v1:" + eventId + ":enabled");
+		ExecutorService recoveryWorkers = Executors.newFixedThreadPool(2);
+		CountDownLatch recover = new CountDownLatch(1);
+		Future<Integer> recoveredFirst = recoveryWorkers.submit(() -> {
+			recover.await(); return waitingRoomService.reconcileRuntime();
+		});
+		Future<Integer> recoveredSecond = recoveryWorkers.submit(() -> {
+			recover.await(); return waitingRoomService.reconcileRuntime();
+		});
+		recover.countDown();
+		assertThat(recoveredFirst.get(10, TimeUnit.SECONDS)
+				+ recoveredSecond.get(10, TimeUnit.SECONDS)).isEqualTo(1);
+		recoveryWorkers.shutdownNow();
+		assertThat(redisTemplate.hasKey("waiting-room:v1:" + eventId + ":enabled")).isTrue();
 		mockMvc.perform(post("/api/events/{eventId}/waiting-room", eventId)
 				.header("Authorization", "Bearer " + accessToken))
 				.andExpect(status().isOk())
@@ -2464,6 +2486,48 @@ class FanEventPlatformApplicationTests {
 				.content(reservationRequest(inventoryId, 1)))
 				.andExpect(status().isCreated());
 		assertThat(inventoryQuantity(inventoryId)).isEqualTo(2);
+		waitingRoomService.close(eventId);
+		assertThat(jdbcTemplate.queryForObject("""
+				SELECT enabled FROM event_waiting_room_policies WHERE event_id = ?
+				""", Boolean.class, eventId)).isFalse();
+		assertThat(redisTemplate.hasKey("waiting-room:v1:" + eventId + ":enabled")).isFalse();
+	}
+
+	@Test
+	@WithMockUser(roles = "ADMIN")
+	void adminConfiguresEventSpecificWaitingRoomPolicyAndReadsQuerydslProjection() throws Exception {
+		Long inventoryId = createOnSaleInventory(3, new BigDecimal("78000.00"));
+		Long eventId = jdbcTemplate.queryForObject("""
+				SELECT session.event_id FROM sellable_inventory inventory
+				JOIN event_sessions session ON session.id = inventory.event_session_id
+				WHERE inventory.id = ?
+				""", Long.class, inventoryId);
+
+		mockMvc.perform(put("/api/admin/events/{eventId}/waiting-room", eventId)
+				.contentType(APPLICATION_JSON)
+				.content(objectMapper.writeValueAsString(Map.of(
+						"enabled", true,
+						"batchSize", 1,
+						"activeCapacity", 1,
+						"admissionTtl", "PT10S"))))
+				.andExpect(status().isNoContent());
+
+		waitingRoomService.join(eventId, 1001L);
+		waitingRoomService.join(eventId, 1002L);
+		assertThat(waitingRoomService.admit(eventId)).isEqualTo(1);
+		assertThat(waitingRoomService.admit(eventId)).isZero();
+
+		mockMvc.perform(get("/api/admin/waiting-rooms"))
+				.andExpect(status().isOk())
+				.andExpect(jsonPath("$[0].eventId").value(eventId))
+				.andExpect(jsonPath("$[0].eventTitle").isString())
+				.andExpect(jsonPath("$[0].batchSize").value(1))
+				.andExpect(jsonPath("$[0].activeCapacity").value(1))
+				.andExpect(jsonPath("$[0].admissionTtlSeconds").value(10))
+				.andExpect(jsonPath("$[0].waitingCount").value(1))
+				.andExpect(jsonPath("$[0].admittedCount").value(1))
+				.andExpect(jsonPath("$[0].redisStatus").value("SYNCHRONIZED"));
+
 		waitingRoomService.close(eventId);
 	}
 

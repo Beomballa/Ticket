@@ -42,6 +42,34 @@ GitHub Actions의 `Secret scan`이 실패하면 탐지된 값을 이슈·채팅�
 - 상세 p95와 DB 커넥션 사용량이 정상 범위
 - 예약 생성 성공률과 429 비율이 예상 범위
 
+## 대기열 정책과 Redis 상태 불일치
+
+### 징후
+
+- `fan_event_waiting_room_total{operation="policy_sync",result="redis_error"}` 증가
+- 운영 콘솔의 대기열 Redis 상태가 `MISSING`, `STALE` 또는 `UNAVAILABLE`
+- 보호 이벤트 참가·예약이 `503 WAITING_ROOM_UNAVAILABLE`로 거부됨
+
+### 즉시 대응
+
+1. PostgreSQL의 활성 정책과 운영 콘솔에 표시된 이벤트·배치·정원·TTL을 확인한다. 정책 DB를 직접 수정하지 않는다.
+2. Redis 연결과 메모리·eviction을 복구한 뒤 운영 콘솔의 `Redis 상태 복구` 또는 다음 API를 실행한다.
+
+```http
+POST /api/admin/waiting-rooms/reconcile
+Authorization: Bearer <admin-token>
+```
+
+3. 목록을 다시 조회해 활성 정책이 `SYNCHRONIZED`, 비활성 정책이 `DISABLED`인지 확인한다.
+4. Redis 전체 데이터가 유실됐다면 기존 대기 순번과 입장 토큰은 복원하지 않는다. 사용자에게 재참가를
+   안내하고 대기 수·입장 처리량이 새로 증가하는지 확인한다.
+
+### 복구 판정
+
+- 복구 API를 반복 실행해도 추가 복구 수가 0
+- 활성 정책의 `redisStatus`가 모두 `SYNCHRONIZED`
+- 10분 동안 `policy_sync/redis_error`와 보호 이벤트 503이 증가하지 않음
+
 ## Outbox 적체·소비 실패
 
 ### 징후
@@ -226,7 +254,7 @@ Authorization: Bearer <admin-token>
 
 ## 초기 경보 기준
 
-`observability/alerts/fan-event-alerts.yml`은 전체 API p95 500ms, 5xx 5%, Outbox active backlog 100건, Outbox 지속 실패, 예약 rate-limit 거부 20%, 결제·환불 `UNKNOWN`과 늦은 승인 보상 최장 체류 5분을 초기 기준으로 사용한다. 경보가 발생하면 단일 순간값이 아니라 설정된 5~10분 지속 여부와 URI별 지표를 먼저 확인한다.
+`observability/alerts/fan-event-alerts.yml`은 전체 API p95 500ms, 5xx 5%, Outbox active backlog 100건, Outbox 지속 실패, 예약 rate-limit 거부 20%, 결제·환불 `UNKNOWN`, 늦은 승인 보상 최장 체류 5분과 대기열 정책 Redis 동기화 실패를 초기 기준으로 사용한다. 경보가 발생하면 단일 순간값이 아니라 설정된 지속 시간과 URI별 지표를 먼저 확인한다.
 
 이 임계값은 로컬 k6 기준선에서 출발한 값이다. 운영 SLO와 실제 트래픽 분포를 확보한 뒤 경보 민감도와 지속 시간을 조정하고 변경 근거를 사건·용량 계획 문서에 남긴다.
 

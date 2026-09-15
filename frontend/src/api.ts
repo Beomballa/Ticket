@@ -115,6 +115,26 @@ export const api = {
     request<MemberReservationDetail>(`/api/reservations/${reservationId}`),
   operationsSummary: () => request<OperationsSummary>('/api/admin/reservations/summary'),
   waitingRooms: () => request<WaitingRoomSummary[]>('/api/admin/waiting-rooms'),
+  configureWaitingRoom: (
+    eventId: number,
+    batchSize: number,
+    activeCapacity: number,
+    admissionTtlSeconds: number,
+  ) => request<void>(`/api/admin/events/${eventId}/waiting-room`, {
+    method: 'PUT',
+    body: JSON.stringify({
+      enabled: true,
+      batchSize,
+      activeCapacity,
+      admissionTtl: `PT${admissionTtlSeconds}S`,
+    }),
+  }),
+  closeWaitingRoom: (eventId: number) => request<void>(
+    `/api/admin/events/${eventId}/waiting-room`, { method: 'DELETE' },
+  ),
+  reconcileWaitingRooms: () => request<{ recoveredCount: number }>(
+    '/api/admin/waiting-rooms/reconcile', { method: 'POST' },
+  ),
   reservations: (status = '') => {
     const query = new URLSearchParams({ page: '0', size: '12' })
     if (status) query.set('status', status)

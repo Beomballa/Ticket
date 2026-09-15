@@ -506,6 +506,10 @@ function AdminConsole({ member, onLogin }: { member: MemberProfile | null; onLog
   const [actionNotice, setActionNotice] = useState('')
   const [reservationStatus, setReservationStatus] = useState('')
   const [soldOut, setSoldOut] = useState('')
+  const [policyEventId, setPolicyEventId] = useState('')
+  const [policyBatchSize, setPolicyBatchSize] = useState('50')
+  const [policyCapacity, setPolicyCapacity] = useState('200')
+  const [policyTtlSeconds, setPolicyTtlSeconds] = useState('120')
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
 
@@ -593,6 +597,52 @@ function AdminConsole({ member, onLogin }: { member: MemberProfile | null; onLog
     }
   }
 
+  const saveWaitingRoom = async (formEvent: FormEvent) => {
+    formEvent.preventDefault()
+    setLoading(true)
+    setError('')
+    setActionNotice('')
+    try {
+      await api.configureWaitingRoom(
+        Number(policyEventId), Number(policyBatchSize), Number(policyCapacity), Number(policyTtlSeconds),
+      )
+      setActionNotice(`이벤트 #${policyEventId} 대기열 정책을 저장했습니다.`)
+      await load()
+    } catch (requestError) {
+      setError(describeError(requestError))
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  const closeWaitingRoom = async (eventId: number) => {
+    setLoading(true)
+    setError('')
+    try {
+      await api.closeWaitingRoom(eventId)
+      setActionNotice(`이벤트 #${eventId} 대기열을 중지했습니다.`)
+      await load()
+    } catch (requestError) {
+      setError(describeError(requestError))
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  const reconcileWaitingRooms = async () => {
+    setLoading(true)
+    setError('')
+    try {
+      const result = await api.reconcileWaitingRooms()
+      setActionNotice(`Redis 대기열 ${result.recoveredCount}개를 복구했습니다.`)
+      await load()
+    } catch (requestError) {
+      setError(describeError(requestError))
+    } finally {
+      setLoading(false)
+    }
+  }
+
   if (!member) return <AccessState title="운영 데이터는 로그인이 필요합니다" action="로그인" onAction={onLogin} />
   if (member.role !== 'ADMIN') return <AccessState title="ADMIN 권한이 필요한 화면입니다" action="이벤트로 돌아가기" onAction={() => window.scrollTo({ top: 0 })} />
 
@@ -604,10 +654,17 @@ function AdminConsole({ member, onLogin }: { member: MemberProfile | null; onLog
       </div>
 
       <section className="table-card waiting-room-admin-card">
-        <div className="table-heading"><div><h2>실시간 예매 대기열</h2><p>Redis 원자 입장 · 최근 1분 처리량</p></div><span className="status processing">{waitingRooms.length}개 운영</span></div>
+        <div className="table-heading"><div><h2>실시간 예매 대기열</h2><p>PostgreSQL 정책 · Redis 원자 입장 · 최근 1분 처리량</p></div><button className="button ghost small" disabled={loading} onClick={() => void reconcileWaitingRooms()}>Redis 상태 복구</button></div>
+        <form className="waiting-room-policy-form" onSubmit={(event) => void saveWaitingRoom(event)}>
+          <label>이벤트 ID<input type="number" min="1" required value={policyEventId} onChange={(event) => setPolicyEventId(event.target.value)} /></label>
+          <label>배치 크기<input type="number" min="1" max="10000" required value={policyBatchSize} onChange={(event) => setPolicyBatchSize(event.target.value)} /></label>
+          <label>활성 정원<input type="number" min="1" max="100000" required value={policyCapacity} onChange={(event) => setPolicyCapacity(event.target.value)} /></label>
+          <label>토큰 TTL(초)<input type="number" min="10" max="3600" required value={policyTtlSeconds} onChange={(event) => setPolicyTtlSeconds(event.target.value)} /></label>
+          <button className="button primary" disabled={loading}>활성화·저장</button>
+        </form>
         {loading ? <InlineLoading /> : waitingRooms.length === 0 ? <EmptyState title="운영 중인 대기열이 없습니다" description="대기열을 연 인기 이벤트가 여기에 표시됩니다." /> : (
-          <div className="table-scroll"><table><thead><tr><th>이벤트</th><th>대기</th><th>입장 활성</th><th>활성 정원</th><th>최근 1분 입장</th></tr></thead><tbody>
-            {waitingRooms.map((room) => <tr key={room.eventId}><td>#{room.eventId}</td><td>{room.waitingCount}명</td><td>{room.admittedCount}명</td><td>{room.activeCapacity}명</td><td>{room.admittedLastMinute}명</td></tr>)}
+          <div className="table-scroll"><table><thead><tr><th>이벤트</th><th>정책</th><th>대기</th><th>입장 활성</th><th>최근 1분</th><th>Redis</th><th /></tr></thead><tbody>
+            {waitingRooms.map((room) => <tr key={room.eventId}><td><strong>{room.eventTitle}</strong><br /><small>#{room.eventId}</small></td><td>배치 {room.batchSize} · 정원 {room.activeCapacity}<br /><small>TTL {room.admissionTtlSeconds}초</small></td><td>{room.waitingCount}명</td><td>{room.admittedCount}명</td><td>{room.admittedLastMinute}명</td><td><span className={`status ${room.redisStatus === 'SYNCHRONIZED' ? 'succeeded' : room.redisStatus === 'UNAVAILABLE' ? 'failed' : 'pending'}`}>{room.redisStatus}</span></td><td><div className="compact-actions"><button className="button ghost small" onClick={() => { setPolicyEventId(String(room.eventId)); setPolicyBatchSize(String(room.batchSize)); setPolicyCapacity(String(room.activeCapacity)); setPolicyTtlSeconds(String(room.admissionTtlSeconds)) }}>수정</button>{room.enabled && <button className="button ghost small" onClick={() => void closeWaitingRoom(room.eventId)}>중지</button>}</div></td></tr>)}
           </tbody></table></div>
         )}
       </section>

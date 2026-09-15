@@ -3,8 +3,6 @@ package com.portfolio.fanevent.waitingroom;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
-import java.util.Set;
-import org.springframework.dao.DataAccessException;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.data.redis.core.script.DefaultRedisScript;
 import org.springframework.stereotype.Component;
@@ -104,10 +102,16 @@ public class WaitingRoomRedisStore {
         return state(redis.execute(STATUS, keys(eventId), memberId.toString(), millis(now)));
     }
 
-    public List<AdmittedMember> admit(Long eventId, Instant now) {
-        Instant expiresAt = now.plus(properties.admissionTtl());
+    public List<AdmittedMember> admit(
+            Long eventId,
+            Instant now,
+            int batchSize,
+            int activeCapacity,
+            java.time.Duration admissionTtl
+    ) {
+        Instant expiresAt = now.plus(admissionTtl);
         List<?> raw = redis.execute(ADMIT, keys(eventId), millis(now),
-                Integer.toString(properties.batchSize()), Integer.toString(properties.activeCapacity()),
+                Integer.toString(batchSize), Integer.toString(activeCapacity),
                 millis(expiresAt));
         List<AdmittedMember> admitted = new ArrayList<>();
         if (raw != null) {
@@ -138,6 +142,15 @@ public class WaitingRoomRedisStore {
         redis.opsForSet().add(events(), eventId.toString());
     }
 
+    public boolean restoreMarkerIfMissing(Long eventId) {
+        Boolean restored = redis.opsForValue().setIfAbsent(enabled(eventId), "1");
+        if (Boolean.TRUE.equals(restored)) {
+            redis.opsForSet().add(events(), eventId.toString());
+            return true;
+        }
+        return false;
+    }
+
     public void close(Long eventId) {
         redis.delete(List.of(enabled(eventId), queue(eventId), admitted(eventId), active(eventId),
                 claimed(eventId), sequence(eventId), admissionSequence(eventId)));
@@ -148,19 +161,14 @@ public class WaitingRoomRedisStore {
         return Boolean.TRUE.equals(redis.hasKey(enabled(eventId)));
     }
 
-    public Set<String> openEventIds() {
-        Set<String> values = redis.opsForSet().members(events());
-        return values == null ? Set.of() : values;
-    }
-
-    public WaitingRoomSummary summary(Long eventId) {
-        boolean enabled = isOpen(eventId);
+    public WaitingRoomRedisStats stats(Long eventId) {
+        boolean markerPresent = isOpen(eventId);
         Long waiting = redis.opsForZSet().zCard(queue(eventId));
         Long active = redis.opsForZSet().zCard(active(eventId));
         Double cutoff = (double) (System.currentTimeMillis() - 60_000);
         Long throughput = redis.opsForZSet().count(throughput(eventId), cutoff, Double.POSITIVE_INFINITY);
-        return new WaitingRoomSummary(eventId, enabled, value(waiting), value(active),
-                properties.batchSize(), properties.activeCapacity(), value(throughput));
+        return new WaitingRoomRedisStats(
+                markerPresent, value(waiting), value(active), value(throughput));
     }
 
     public void recordAdmissions(Long eventId, List<AdmittedMember> admitted, Instant now) {

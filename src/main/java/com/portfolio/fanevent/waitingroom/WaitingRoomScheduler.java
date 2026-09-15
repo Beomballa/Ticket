@@ -22,7 +22,10 @@ public class WaitingRoomScheduler {
     public void admitWaitingMembers() {
         if (!properties.enabled()) return;
         try {
-            service.summaries().forEach(summary -> service.admit(summary.eventId()));
+            service.reconcileRuntime();
+            service.summaries().stream()
+                    .filter(WaitingRoomSummary::enabled)
+                    .forEach(summary -> service.admit(summary.eventId()));
         } catch (WaitingRoomUnavailableException exception) {
             log.warn("Redis 대기열 자동 입장을 다음 주기로 연기합니다.");
         }
