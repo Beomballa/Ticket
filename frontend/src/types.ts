@@ -202,3 +202,17 @@ export interface WebhookInboxSummary {
   processingLeaseUntil: string | null
   lastError: string | null
 }
+
+export interface CompensationSummary {
+  refundAttemptId: string
+  reservationId: number
+  paymentAttemptId: string
+  amount: number
+  status: 'REQUESTED' | 'UNKNOWN' | 'SUCCEEDED' | 'DECLINED'
+  attempts: number
+  requestedAt: string
+  resolvedAt: string | null
+  nextReconciliationAt: string | null
+  reconciliationLeaseUntil: string | null
+  lastError: string | null
+}

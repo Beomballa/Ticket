@@ -27,6 +27,8 @@ public class MockPaymentGateway implements PaymentGateway, PaymentWebhookResultR
     public static final String REFUND_TIMEOUT_SUCCEEDED_TOKEN = "mock-refund-timeout-succeeded";
     public static final String REFUND_TIMEOUT_DECLINED_TOKEN = "mock-refund-timeout-declined";
     public static final String REFUND_TIMEOUT_UNKNOWN_TOKEN = "mock-refund-timeout-unknown";
+    public static final String LATE_COMPENSATION_UNKNOWN_TOKEN =
+            "mock-late-compensation-timeout-unknown";
 
     private final Map<String, PaymentGatewayResult> results = new ConcurrentHashMap<>();
     private final Map<String, String> paymentReferences = new ConcurrentHashMap<>();
@@ -53,7 +55,11 @@ public class MockPaymentGateway implements PaymentGateway, PaymentWebhookResultR
             results.put(gatewayIdempotencyKey, PaymentGatewayResult.DECLINED);
             throw new PaymentGatewayTimeoutException();
         }
-        if (TIMEOUT_UNKNOWN_TOKEN.equals(paymentToken)) {
+        if (TIMEOUT_UNKNOWN_TOKEN.equals(paymentToken)
+                || LATE_COMPENSATION_UNKNOWN_TOKEN.equals(paymentToken)) {
+            if (LATE_COMPENSATION_UNKNOWN_TOKEN.equals(paymentToken)) {
+                refundScenarios.put(reservationId, RefundScenario.TIMEOUT_UNKNOWN);
+            }
             results.put(gatewayIdempotencyKey, PaymentGatewayResult.UNKNOWN);
             throw new PaymentGatewayTimeoutException();
         }

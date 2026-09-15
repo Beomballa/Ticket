@@ -22,6 +22,7 @@ public class AutomaticReconciliationService {
     private final ReconciliationLeaseRepository leaseRepository;
     private final AdminPaymentService paymentService;
     private final AdminRefundService refundService;
+    private final LateApprovalCompensationService compensationService;
     private final ReconciliationProperties properties;
     private final OperationalMetrics metrics;
 
@@ -29,12 +30,14 @@ public class AutomaticReconciliationService {
             ReconciliationLeaseRepository leaseRepository,
             AdminPaymentService paymentService,
             AdminRefundService refundService,
+            LateApprovalCompensationService compensationService,
             ReconciliationProperties properties,
             OperationalMetrics metrics
     ) {
         this.leaseRepository = leaseRepository;
         this.paymentService = paymentService;
         this.refundService = refundService;
+        this.compensationService = compensationService;
         this.properties = properties;
         this.metrics = metrics;
     }
@@ -47,6 +50,12 @@ public class AutomaticReconciliationService {
                 candidate -> paymentService.reconcile(
                         candidate.attemptId(), SYSTEM_ACTOR).resolved(),
                 leaseRepository::completePayment);
+        int compensations = process(
+                "late-payment-compensation",
+                () -> leaseRepository.claimCompensations(
+                        properties.batchSize(), properties.processingTimeout()),
+                candidate -> compensationService.compensate(candidate.attemptId()),
+                leaseRepository::completeCompensation);
         int refunds = process(
                 "refund",
                 () -> leaseRepository.claimRefunds(
@@ -54,7 +63,7 @@ public class AutomaticReconciliationService {
                 candidate -> refundService.reconcile(
                         candidate.attemptId(), SYSTEM_ACTOR).resolved(),
                 leaseRepository::completeRefund);
-        return payments + refunds;
+        return payments + compensations + refunds;
     }
 
     private int process(

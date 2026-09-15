@@ -132,6 +132,10 @@ public class Reservation extends BaseEntity {
         return status == ReservationStatus.CANCELLED;
     }
 
+    public boolean isExpired() {
+        return status == ReservationStatus.EXPIRED;
+    }
+
     public ReservationStatus getStatus() {
         return status;
     }

@@ -29,5 +29,8 @@ public class ReconciliationBacklogMonitor {
                 snapshot.paymentOldestAgeSeconds(),
                 snapshot.refundCount(),
                 snapshot.refundOldestAgeSeconds());
+        metrics.updateCompensationBacklog(
+                snapshot.compensationCount(),
+                snapshot.compensationOldestAgeSeconds());
     }
 }

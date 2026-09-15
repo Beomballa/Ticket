@@ -73,3 +73,12 @@ groups:
         annotations:
           summary: 환불 결과 불명 건이 5분 넘게 해소되지 않고 있습니다.
           runbook: docs/runbooks/incident-response.md
+
+      - alert: FanEventLatePaymentCompensationStale
+        expr: fan_event_payment_compensation_oldest_age_seconds > 300
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: 늦은 승인 보상 환불이 5분 넘게 해소되지 않고 있습니다.
+          runbook: docs/runbooks/incident-response.md

@@ -120,7 +120,7 @@ Authorization: Bearer <admin-token>
 ```
 
 5. `resolved=false`이면 PG 결과가 아직 없다는 뜻이므로 `UNKNOWN`을 유지한다. 승인 API를 새 키로 반복 호출하지 않는다.
-6. 승인으로 확인됐지만 예약이 이미 만료·취소돼 자동 확정할 수 없으면 환불·재고 영향을 확인하고 수동 보상 사건으로 전환한다.
+6. 승인으로 확인됐지만 예약이 이미 만료됐다면 `LATE_PAYMENT_COMPENSATION` 환불이 자동 생성됐는지 확인한다. 예약을 다시 확정하거나 재고를 다시 차감하지 않는다.
 
 ### 복구 판정
 
@@ -162,6 +162,37 @@ Authorization: Bearer <admin-token>
 - 거절 건은 예약 `CONFIRMED`와 기존 재고 수량 유지
 - 같은 `refundAttemptId` 재대사에도 추가 환불·재고 반환·Outbox가 생성되지 않음
 
+## 늦은 승인 보상 환불
+
+### 징후
+
+- `fan_event_payment_compensation_backlog` 또는 `fan_event_payment_compensation_oldest_age_seconds` 증가
+- 운영 콘솔의 보상 환불이 `REQUESTED`, `UNKNOWN`, `DECLINED`에 머묾
+- 결제 원장은 `APPROVED`지만 예약은 `EXPIRED`이고 보상 환불이 완료되지 않음
+
+### 즉시 대응
+
+1. 예약이 실제 `EXPIRED`이고 재고가 이미 반환됐는지 확인한다. 예약을 `CONFIRMED`로 직접 변경하지 않는다.
+2. 결제 시도와 보상 환불의 금액, 원 결제 참조, 목적 `LATE_PAYMENT_COMPENSATION`과 예약별 고정 멱등키를 확인한다.
+3. `UNKNOWN`이면 PG 환불 조회 상태와 자동 대사 임대·다음 실행 시각을 확인한다. `REQUESTED` 또는 `DECLINED`이면 거절 원인을 해소한 뒤 관리자 재처리를 실행한다.
+
+```http
+GET /api/admin/payment-compensations?page=0&size=20
+Authorization: Bearer <admin-token>
+
+POST /api/admin/payment-compensations/{attemptId}/retry
+Authorization: Bearer <admin-token>
+```
+
+4. 같은 예약에 새 환불 키를 만들지 않는다. 기존 고정 PG 멱등키의 요청·조회 이력으로 복구한다.
+
+### 복구 판정
+
+- 보상 환불이 `SUCCEEDED`, 결제 시도가 `APPROVED`로 확정됨
+- 예약은 `EXPIRED`, 반환된 재고 수량은 그대로 유지됨
+- `RESERVATION_CONFIRMED`·`RESERVATION_CANCELLED` Outbox가 추가되지 않음
+- 같은 보상 재처리와 중복 웹훅에도 환불 원장·감사 부작용이 한 번만 유지됨
+
 ## PG 웹훅 처리 실패
 
 ### 징후
@@ -195,7 +226,7 @@ Authorization: Bearer <admin-token>
 
 ## 초기 경보 기준
 
-`observability/alerts/fan-event-alerts.yml`은 전체 API p95 500ms, 5xx 5%, Outbox active backlog 100건, Outbox 지속 실패, 예약 rate-limit 거부 20%, 결제·환불 `UNKNOWN` 최장 체류 5분을 초기 기준으로 사용한다. 경보가 발생하면 단일 순간값이 아니라 설정된 5~10분 지속 여부와 URI별 지표를 먼저 확인한다.
+`observability/alerts/fan-event-alerts.yml`은 전체 API p95 500ms, 5xx 5%, Outbox active backlog 100건, Outbox 지속 실패, 예약 rate-limit 거부 20%, 결제·환불 `UNKNOWN`과 늦은 승인 보상 최장 체류 5분을 초기 기준으로 사용한다. 경보가 발생하면 단일 순간값이 아니라 설정된 5~10분 지속 여부와 URI별 지표를 먼저 확인한다.
 
 이 임계값은 로컬 k6 기준선에서 출발한 값이다. 운영 SLO와 실제 트래픽 분포를 확보한 뒤 경보 민감도와 지속 시간을 조정하고 변경 근거를 사건·용량 계획 문서에 남긴다.
 

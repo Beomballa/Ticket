@@ -57,6 +57,27 @@ public class ReconciliationLeaseRepository {
             RETURNING attempt.id, attempt.reconciliation_attempts
             """;
 
+    private static final String CLAIM_COMPENSATION = """
+            WITH candidates AS (
+                SELECT id
+                FROM refund_attempts
+                WHERE purpose = 'LATE_PAYMENT_COMPENSATION'
+                  AND status = 'REQUESTED'
+                  AND next_reconciliation_at <= ?
+                  AND (reconciliation_lease_until IS NULL OR reconciliation_lease_until <= ?)
+                ORDER BY next_reconciliation_at, id
+                LIMIT ?
+                FOR UPDATE SKIP LOCKED
+            )
+            UPDATE refund_attempts attempt
+            SET reconciliation_attempts = attempt.reconciliation_attempts + 1,
+                last_reconciliation_at = ?,
+                reconciliation_lease_until = ?
+            FROM candidates
+            WHERE attempt.id = candidates.id
+            RETURNING attempt.id, attempt.reconciliation_attempts
+            """;
+
     private final JdbcTemplate jdbcTemplate;
     private final Clock clock;
 
@@ -76,6 +97,35 @@ public class ReconciliationLeaseRepository {
     }
 
     @Transactional(propagation = Propagation.REQUIRES_NEW)
+    public List<ReconciliationCandidate> claimCompensations(int batchSize, Duration leaseDuration) {
+        return claim(CLAIM_COMPENSATION, batchSize, leaseDuration);
+    }
+
+    @Transactional(propagation = Propagation.REQUIRES_NEW)
+    public ReconciliationCandidate claimCompensation(UUID attemptId, Duration leaseDuration) {
+        Instant now = clock.instant();
+        List<ReconciliationCandidate> claimed = jdbcTemplate.query("""
+                UPDATE refund_attempts
+                SET reconciliation_attempts = reconciliation_attempts + 1,
+                    last_reconciliation_at = ?,
+                    reconciliation_lease_until = ?
+                WHERE id = ?
+                  AND purpose = 'LATE_PAYMENT_COMPENSATION'
+                  AND status = 'REQUESTED'
+                  AND (reconciliation_lease_until IS NULL OR reconciliation_lease_until <= ?)
+                RETURNING id, reconciliation_attempts
+                """,
+                (resultSet, rowNumber) -> new ReconciliationCandidate(
+                        resultSet.getObject("id", UUID.class),
+                        resultSet.getInt("reconciliation_attempts")),
+                Timestamp.from(now),
+                Timestamp.from(now.plus(leaseDuration)),
+                attemptId,
+                Timestamp.from(now));
+        return claimed.isEmpty() ? null : claimed.getFirst();
+    }
+
+    @Transactional(propagation = Propagation.REQUIRES_NEW)
     public void completePayment(ReconciliationCandidate candidate, Duration retryDelay) {
         complete("payment_attempts", candidate, retryDelay);
     }
@@ -85,21 +135,51 @@ public class ReconciliationLeaseRepository {
         complete("refund_attempts", candidate, retryDelay);
     }
 
+    @Transactional(propagation = Propagation.REQUIRES_NEW)
+    public void completeCompensation(ReconciliationCandidate candidate, Duration retryDelay) {
+        jdbcTemplate.update("""
+                UPDATE refund_attempts
+                SET reconciliation_lease_until = NULL,
+                    next_reconciliation_at = CASE
+                        WHEN status IN ('REQUESTED', 'UNKNOWN') THEN CAST(? AS TIMESTAMPTZ)
+                        ELSE NULL
+                    END
+                WHERE id = ?
+                  AND purpose = 'LATE_PAYMENT_COMPENSATION'
+                  AND reconciliation_attempts = ?
+                """,
+                Timestamp.from(clock.instant().plus(retryDelay)),
+                candidate.attemptId(),
+                candidate.attempts());
+    }
+
     @Transactional(readOnly = true)
     public ReconciliationBacklogSnapshot snapshot() {
         Map<String, Object> row = jdbcTemplate.queryForMap("""
                 SELECT
                     (SELECT count(*) FROM payment_attempts WHERE status = 'UNKNOWN') payment_count,
                     (SELECT min(requested_at) FROM payment_attempts WHERE status = 'UNKNOWN') payment_oldest,
-                    (SELECT count(*) FROM refund_attempts WHERE status = 'UNKNOWN') refund_count,
-                    (SELECT min(requested_at) FROM refund_attempts WHERE status = 'UNKNOWN') refund_oldest
+                    (SELECT count(*) FROM refund_attempts
+                        WHERE status = 'UNKNOWN'
+                          AND purpose = 'RESERVATION_CANCELLATION') refund_count,
+                    (SELECT min(requested_at) FROM refund_attempts
+                        WHERE status = 'UNKNOWN'
+                          AND purpose = 'RESERVATION_CANCELLATION') refund_oldest,
+                    (SELECT count(*) FROM refund_attempts
+                        WHERE purpose = 'LATE_PAYMENT_COMPENSATION'
+                          AND status IN ('REQUESTED', 'UNKNOWN')) compensation_count,
+                    (SELECT min(requested_at) FROM refund_attempts
+                        WHERE purpose = 'LATE_PAYMENT_COMPENSATION'
+                          AND status IN ('REQUESTED', 'UNKNOWN')) compensation_oldest
                 """);
         Instant now = clock.instant();
         return new ReconciliationBacklogSnapshot(
                 ((Number) row.get("payment_count")).longValue(),
                 ageSeconds(row.get("payment_oldest"), now),
                 ((Number) row.get("refund_count")).longValue(),
-                ageSeconds(row.get("refund_oldest"), now));
+                ageSeconds(row.get("refund_oldest"), now),
+                ((Number) row.get("compensation_count")).longValue(),
+                ageSeconds(row.get("compensation_oldest"), now));
     }
 
     private List<ReconciliationCandidate> claim(

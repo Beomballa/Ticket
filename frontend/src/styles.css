@@ -79,6 +79,9 @@ input, select { border: 1px solid var(--line); background: white; border-radius:
 .status.processing { color: #3157a4; background: #eaf0ff; }
 .status.received { color: #5f4b12; background: #fff7d6; }
 .status.processed { color: var(--success); background: #e6f7f4; }
+.status.succeeded { color: var(--success); background: #e6f7f4; }
+.status.requested, .status.compensation { color: #5f4b12; background: #fff7d6; }
+.status.declined { color: var(--danger); background: #ffebe9; }
 .status.cancelled, .status.expired, .status.failed { color: var(--danger); background: #ffebe9; }
 
 .overlay { position: fixed; inset: 0; z-index: 50; display: flex; justify-content: flex-end; background: rgb(14 14 18 / 45%); backdrop-filter: blur(4px); }
@@ -133,6 +136,7 @@ input, select { border: 1px solid var(--line); background: white; border-radius:
 .admin-grid { display: grid; grid-template-columns: 1.35fr 1fr; gap: 20px; }
 .outbox-card { margin-top: 20px; }
 .webhook-card { margin-top: 20px; }
+.compensation-card { margin-top: 20px; }
 .reconciliation-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; margin-top: 20px; }
 .action-notice { margin: 0 0 20px; padding: 12px 14px; border: 1px solid #b7e2cc; border-radius: 11px; color: #17613d; background: #f1fbf6; font-size: 13px; }
 .error-cell { max-width: 260px; overflow: hidden; text-overflow: ellipsis; }

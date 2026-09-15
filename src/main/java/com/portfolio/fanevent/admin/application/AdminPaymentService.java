@@ -7,7 +7,10 @@ import com.portfolio.fanevent.payment.application.PaymentGatewayResult;
 import com.portfolio.fanevent.payment.application.PaymentReconciliationResult;
 import com.portfolio.fanevent.payment.domain.PaymentAttempt;
 import com.portfolio.fanevent.payment.domain.PaymentAttemptStatus;
+import com.portfolio.fanevent.payment.domain.RefundAttempt;
+import com.portfolio.fanevent.payment.domain.RefundPurpose;
 import com.portfolio.fanevent.payment.infrastructure.PaymentAttemptRepository;
+import com.portfolio.fanevent.payment.infrastructure.RefundAttemptRepository;
 import com.portfolio.fanevent.reservation.domain.Reservation;
 import com.portfolio.fanevent.reservation.infrastructure.ReservationRepository;
 import com.portfolio.fanevent.support.observability.OperationalMetrics;
@@ -31,6 +34,7 @@ public class AdminPaymentService {
     private final AdminPaymentQueryRepository queryRepository;
     private final PaymentAttemptRepository attemptRepository;
     private final ReservationRepository reservationRepository;
+    private final RefundAttemptRepository refundRepository;
     private final PaymentGateway paymentGateway;
     private final OutboxEventWriter outboxEventWriter;
     private final OperationalMetrics metrics;
@@ -41,6 +45,7 @@ public class AdminPaymentService {
             AdminPaymentQueryRepository queryRepository,
             PaymentAttemptRepository attemptRepository,
             ReservationRepository reservationRepository,
+            RefundAttemptRepository refundRepository,
             PaymentGateway paymentGateway,
             OutboxEventWriter outboxEventWriter,
             OperationalMetrics metrics,
@@ -50,6 +55,7 @@ public class AdminPaymentService {
         this.queryRepository = queryRepository;
         this.attemptRepository = attemptRepository;
         this.reservationRepository = reservationRepository;
+        this.refundRepository = refundRepository;
         this.paymentGateway = paymentGateway;
         this.outboxEventWriter = outboxEventWriter;
         this.metrics = metrics;
@@ -92,8 +98,18 @@ public class AdminPaymentService {
             return result(attempt, reservation, true);
         }
 
-        reservation.requireConfirmable(now);
         attempt.approve(gatewayResult.gatewayReference(), now);
+        if (reservation.isExpired()) {
+            createLateApprovalCompensation(attempt, now);
+            recordAudit(attempt, adminSubject, "APPROVED_COMPENSATION_PENDING");
+            attemptRepository.flush();
+            metrics.paymentReconciliation("approved_compensation_pending");
+            metrics.lateApprovalCompensation("created");
+            log.warn("late payment approval compensation created: paymentAttemptId={}, reservationId={}",
+                    attemptId, reservation.getId());
+            return result(attempt, reservation, true);
+        }
+        reservation.requireConfirmable(now);
         if (reservation.confirm(now)) {
             outboxEventWriter.appendReservationEvent(
                     reservation, "RESERVATION_CONFIRMED", now);
@@ -105,6 +121,24 @@ public class AdminPaymentService {
         log.info("payment reconciliation approved: paymentAttemptId={}, reservationId={}",
                 attemptId, reservation.getId());
         return result(attempt, reservation, true);
+    }
+
+    private void createLateApprovalCompensation(PaymentAttempt payment, Instant now) {
+        RefundAttempt existing = refundRepository.findByReservationId(payment.getReservationId())
+                .orElse(null);
+        if (existing != null) {
+            if (existing.getPurpose() != RefundPurpose.LATE_PAYMENT_COMPENSATION) {
+                throw new IllegalStateException("예약에 다른 목적의 환불 시도가 이미 존재합니다.");
+            }
+            return;
+        }
+        refundRepository.save(RefundAttempt.latePaymentCompensation(
+                payment.getReservationId(),
+                payment.getId(),
+                "late-payment-compensation-" + payment.getReservationId(),
+                payment.getGatewayReference(),
+                payment.getAmount(),
+                now));
     }
 
     private PaymentReconcileResult result(

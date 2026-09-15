@@ -34,6 +34,10 @@ public class RefundAttempt {
     private BigDecimal amount;
 
     @Enumerated(EnumType.STRING)
+    @Column(nullable = false, length = 40)
+    private RefundPurpose purpose;
+
+    @Enumerated(EnumType.STRING)
     @Column(nullable = false, length = 20)
     private RefundAttemptStatus status;
 
@@ -80,6 +84,7 @@ public class RefundAttempt {
             String gatewayIdempotencyKey,
             String gatewayPaymentReference,
             BigDecimal amount,
+            RefundPurpose purpose,
             Instant requestedAt
     ) {
         this.id = UUID.randomUUID();
@@ -88,6 +93,7 @@ public class RefundAttempt {
         this.gatewayIdempotencyKey = gatewayIdempotencyKey;
         this.gatewayPaymentReference = gatewayPaymentReference;
         this.amount = amount;
+        this.purpose = purpose;
         this.status = RefundAttemptStatus.REQUESTED;
         this.requestedAt = requestedAt;
         this.createdAt = requestedAt;
@@ -114,7 +120,34 @@ public class RefundAttempt {
                 gatewayIdempotencyKey,
                 gatewayPaymentReference,
                 amount,
+                RefundPurpose.RESERVATION_CANCELLATION,
                 requestedAt);
+    }
+
+    public static RefundAttempt latePaymentCompensation(
+            Long reservationId,
+            UUID paymentAttemptId,
+            String gatewayIdempotencyKey,
+            String gatewayPaymentReference,
+            BigDecimal amount,
+            Instant requestedAt
+    ) {
+        if (reservationId == null || paymentAttemptId == null
+                || gatewayIdempotencyKey == null || gatewayIdempotencyKey.isBlank()
+                || gatewayPaymentReference == null || gatewayPaymentReference.isBlank()
+                || amount == null || amount.signum() < 0 || requestedAt == null) {
+            throw new IllegalArgumentException("보상 환불 시도 필수값이 누락되었습니다.");
+        }
+        RefundAttempt attempt = new RefundAttempt(
+                reservationId,
+                paymentAttemptId,
+                gatewayIdempotencyKey,
+                gatewayPaymentReference,
+                amount,
+                RefundPurpose.LATE_PAYMENT_COMPENSATION,
+                requestedAt);
+        attempt.nextReconciliationAt = requestedAt;
+        return attempt;
     }
 
     public void succeed(String gatewayRefundReference, Instant resolvedAt) {
@@ -145,6 +178,21 @@ public class RefundAttempt {
         this.updatedAt = occurredAt;
         this.nextReconciliationAt = occurredAt;
         this.reconciliationLeaseUntil = null;
+    }
+
+    public void retryCompensation(Instant occurredAt) {
+        if (purpose != RefundPurpose.LATE_PAYMENT_COMPENSATION) {
+            throw new IllegalStateException("일반 취소 환불은 보상 재처리할 수 없습니다.");
+        }
+        if (status == RefundAttemptStatus.SUCCEEDED) {
+            return;
+        }
+        this.status = RefundAttemptStatus.REQUESTED;
+        this.lastError = null;
+        this.resolvedAt = null;
+        this.nextReconciliationAt = occurredAt;
+        this.reconciliationLeaseUntil = null;
+        this.updatedAt = occurredAt;
     }
 
     private void requireUnresolved() {
@@ -182,6 +230,10 @@ public class RefundAttempt {
         return amount;
     }
 
+    public RefundPurpose getPurpose() {
+        return purpose;
+    }
+
     public RefundAttemptStatus getStatus() {
         return status;
     }
@@ -200,5 +252,17 @@ public class RefundAttempt {
 
     public Instant getResolvedAt() {
         return resolvedAt;
+    }
+
+    public int getReconciliationAttempts() {
+        return reconciliationAttempts;
+    }
+
+    public Instant getNextReconciliationAt() {
+        return nextReconciliationAt;
+    }
+
+    public Instant getReconciliationLeaseUntil() {
+        return reconciliationLeaseUntil;
     }
 }

@@ -129,6 +129,13 @@ Inbox에 저장한다. 같은 event ID·같은 본문 재전달은 기존 결과
 `GET /api/admin/payment-webhooks`에서 상태·오류를 확인하고 `FAILED` 건을
 `POST /api/admin/payment-webhooks/{eventId}/retry`로 재처리한다.
 
+결제 결과가 승인으로 확인된 시점에 예약이 이미 `EXPIRED`라면 예약을 되살리거나 재고를 다시
+차감하지 않는다. 결제 승인 원장과 `LATE_PAYMENT_COMPENSATION` 환불 시도를 한 트랜잭션으로
+기록하고, 예약별 고정 PG 멱등키로 자동 전액 환불한다. 즉시 응답 유실은 `UNKNOWN` 환불 대사와
+지수 백오프로 이어진다. 관리자는 운영 콘솔 또는 `GET /api/admin/payment-compensations`에서
+보상 상태·시도·오류를 확인하고 `POST /api/admin/payment-compensations/{attemptId}/retry`로
+긴급 재처리할 수 있다. 보상 성공은 이미 반환된 재고와 만료 예약 상태를 변경하지 않는다.
+
 인증 사용자는 `GET /api/reservations`에서 상태·생성 기간별로 자신의 예약만 조회하고,
 `GET /api/reservations/{id}`에서 공연·회차·재고·수량과 요청 당시 가격 스냅샷을 확인한다.
 목록은 QueryDSL 집계 Projection으로 본문과 count를 각각 한 번 실행하고, 상세는 소유권을 포함한
@@ -226,6 +233,7 @@ bundle 생성을 실행한다. Gitleaks는 현재 파일만이 아니라 전체 
 - [ADR-0019: 환불 시도 원장과 결과 불명 대사](docs/adr/0019-refund-attempt-reconciliation.md)
 - [ADR-0020: 결과 불명 자동 대사 임대와 백오프](docs/adr/0020-automatic-reconciliation.md)
 - [ADR-0021: 서명 검증 PG 웹훅 Inbox와 멱등 처리](docs/adr/0021-signed-payment-webhook-inbox.md)
+- [ADR-0022: 예약 만료 후 늦은 승인 보상 환불 Saga](docs/adr/0022-late-payment-compensation-saga.md)
 - [이벤트 목록 조회 기준선](docs/performance/event-list-baseline.md)
 - [관리자 조회 실행 계획](docs/performance/admin-query-plan.md)
 - [offset과 커서 페이지네이션 비교](docs/performance/reservation-pagination-comparison.md)

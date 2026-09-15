@@ -35,6 +35,8 @@ import com.portfolio.fanevent.payment.application.AutomaticReconciliationService
 import com.portfolio.fanevent.payment.application.ReconciliationCandidate;
 import com.portfolio.fanevent.payment.infrastructure.ReconciliationLeaseRepository;
 import com.portfolio.fanevent.payment.webhook.PaymentWebhookInboxStore;
+import com.portfolio.fanevent.payment.webhook.PaymentWebhookResultRecorder;
+import com.portfolio.fanevent.payment.application.RefundGatewayResult;
 import com.portfolio.fanevent.reservation.application.ReservationExpirationService;
 import com.portfolio.fanevent.support.observability.ReconciliationBacklogMonitor;
 import com.portfolio.fanevent.support.persistence.QBaseEntity;
@@ -165,6 +167,9 @@ class FanEventPlatformApplicationTests {
 	@Autowired
 	private PaymentWebhookInboxStore paymentWebhookInboxStore;
 
+	@Autowired
+	private PaymentWebhookResultRecorder paymentWebhookResultRecorder;
+
 	@MockitoSpyBean
 	private PaymentGateway paymentGateway;
 
@@ -252,6 +257,12 @@ class FanEventPlatformApplicationTests {
 						.value("#/components/responses/Conflict"))
 				.andExpect(jsonPath("$.paths['/api/admin/payment-webhooks'].get").exists())
 				.andExpect(jsonPath("$.paths['/api/admin/payment-webhooks/{eventId}/retry'].post").exists());
+
+		mockMvc.perform(get("/v3/api-docs/admin"))
+				.andExpect(status().isOk())
+				.andExpect(jsonPath("$.paths['/api/admin/payment-compensations'].get").exists())
+				.andExpect(jsonPath("$.paths['/api/admin/payment-compensations/{attemptId}/retry'].post.responses['409']['$ref']")
+						.value("#/components/responses/Conflict"));
 
 		mockMvc.perform(get("/v3/api-docs/public"))
 				.andExpect(status().isOk())
@@ -1189,6 +1200,172 @@ class FanEventPlatformApplicationTests {
 				""", Integer.class, attempt.get("id").toString())).isEqualTo(1);
 		mockMvc.perform(get("/actuator/prometheus"))
 				.andExpect(content().string(containsString("fan_event_payment_webhook_total")));
+	}
+
+	@Test
+	void latePaymentApprovalCreatesAndCompletesCompensationOnceAcrossWorkers() throws Exception {
+		String accessToken = login(signupUniqueMember("늦은 승인 보상 회원"), "secure-password");
+		Long inventoryId = createOnSaleInventory(1, new BigDecimal("29350.00"));
+		Long reservationId = holdReservation(accessToken, inventoryId, 1);
+		mockMvc.perform(post("/api/reservations/{reservationId}/confirm", reservationId)
+				.header("Authorization", "Bearer " + accessToken)
+				.header("Idempotency-Key", UUID.randomUUID().toString())
+				.contentType(APPLICATION_JSON)
+				.content(objectMapper.writeValueAsString(Map.of(
+						"paymentToken", "mock-timeout-unknown"))))
+				.andExpect(status().isConflict());
+		makeReservationExpired(reservationId, 1);
+		assertThat(expirationService.expireNextBatch(1)).isEqualTo(1);
+		assertThat(inventoryQuantity(inventoryId)).isEqualTo(1);
+
+		String gatewayKey = jdbcTemplate.queryForObject("""
+				SELECT gateway_idempotency_key FROM payment_attempts WHERE reservation_id = ?
+				""", String.class, reservationId);
+		String eventId = "late-approval-" + UUID.randomUUID();
+		String timestamp = Long.toString(Instant.now().getEpochSecond());
+		String body = objectMapper.writeValueAsString(Map.of(
+				"eventType", "PAYMENT_AUTHORIZATION_RESULT",
+				"gatewayIdempotencyKey", gatewayKey,
+				"result", "APPROVED",
+				"gatewayReference", "late-payment-reference",
+				"occurredAt", Instant.now().toString()));
+		performWebhook(eventId, timestamp, body, webhookSignature(timestamp, body))
+				.andExpect(status().isAccepted())
+				.andExpect(jsonPath("$.status").value("PROCESSED"));
+		performWebhook(eventId, timestamp, body, webhookSignature(timestamp, body))
+				.andExpect(status().isAccepted())
+				.andExpect(jsonPath("$.duplicate").value(true));
+
+		assertThat(reservationStatus(reservationId)).isEqualTo("EXPIRED");
+		assertThat(jdbcTemplate.queryForObject("""
+				SELECT status FROM payment_attempts WHERE reservation_id = ?
+				""", String.class, reservationId)).isEqualTo("APPROVED");
+		assertThat(jdbcTemplate.queryForObject("""
+				SELECT count(*) FROM refund_attempts
+				WHERE reservation_id = ? AND purpose = 'LATE_PAYMENT_COMPENSATION'
+				""", Integer.class, reservationId)).isEqualTo(1);
+
+		ExecutorService executor = Executors.newFixedThreadPool(2);
+		CountDownLatch start = new CountDownLatch(1);
+		try {
+			Future<Integer> first = executor.submit(() -> {
+				start.await();
+				return automaticReconciliationService.reconcileNextBatch();
+			});
+			Future<Integer> second = executor.submit(() -> {
+				start.await();
+				return automaticReconciliationService.reconcileNextBatch();
+			});
+			start.countDown();
+			assertThat(first.get(10, TimeUnit.SECONDS) + second.get(10, TimeUnit.SECONDS))
+					.isEqualTo(1);
+		} finally {
+			executor.shutdownNow();
+		}
+
+		assertThat(jdbcTemplate.queryForObject("""
+				SELECT status FROM refund_attempts WHERE reservation_id = ?
+				""", String.class, reservationId)).isEqualTo("SUCCEEDED");
+		assertThat(inventoryQuantity(inventoryId)).isEqualTo(1);
+		assertThat(outboxCount(reservationId, "RESERVATION_CANCELLED")).isZero();
+		assertThat(jdbcTemplate.queryForObject("""
+				SELECT count(*) FROM audit_logs
+				WHERE action = 'LATE_PAYMENT_COMPENSATION'
+				  AND details ->> 'reservationId' = ?
+				""", Integer.class, reservationId.toString())).isEqualTo(1);
+	}
+
+	@Test
+	void automaticReconciliationCompensatesApprovalFoundAfterExpiration() throws Exception {
+		String accessToken = login(signupUniqueMember("자동 늦은 승인 보상 회원"), "secure-password");
+		Long inventoryId = createOnSaleInventory(1, new BigDecimal("29360.00"));
+		Long reservationId = holdReservation(accessToken, inventoryId, 1);
+		mockMvc.perform(post("/api/reservations/{reservationId}/confirm", reservationId)
+				.header("Authorization", "Bearer " + accessToken)
+				.header("Idempotency-Key", UUID.randomUUID().toString())
+				.contentType(APPLICATION_JSON)
+				.content(objectMapper.writeValueAsString(Map.of(
+						"paymentToken", "mock-timeout-approved"))))
+				.andExpect(status().isConflict());
+		makeReservationExpired(reservationId, 1);
+		assertThat(expirationService.expireNextBatch(1)).isEqualTo(1);
+
+		assertThat(automaticReconciliationService.reconcileNextBatch()).isEqualTo(2);
+		assertThat(reservationStatus(reservationId)).isEqualTo("EXPIRED");
+		assertThat(inventoryQuantity(inventoryId)).isEqualTo(1);
+		Map<String, Object> ledger = jdbcTemplate.queryForMap("""
+				SELECT p.status payment_status, r.status refund_status, r.purpose
+				FROM payment_attempts p
+				JOIN refund_attempts r ON r.payment_attempt_id = p.id
+				WHERE p.reservation_id = ?
+				""", reservationId);
+		assertThat(ledger.get("payment_status")).isEqualTo("APPROVED");
+		assertThat(ledger.get("refund_status")).isEqualTo("SUCCEEDED");
+		assertThat(ledger.get("purpose")).isEqualTo("LATE_PAYMENT_COMPENSATION");
+		assertThat(outboxCount(reservationId, "RESERVATION_CONFIRMED")).isZero();
+		assertThat(outboxCount(reservationId, "RESERVATION_CANCELLED")).isZero();
+	}
+
+	@Test
+	@WithMockUser(username = "admin-test", roles = "ADMIN")
+	void unknownLateApprovalCompensationIsVisibleAndManuallyRecovered() throws Exception {
+		String accessToken = login(signupUniqueMember("보상 결과 불명 회원"), "secure-password");
+		Long inventoryId = createOnSaleInventory(1, new BigDecimal("29370.00"));
+		Long reservationId = holdReservation(accessToken, inventoryId, 1);
+		mockMvc.perform(post("/api/reservations/{reservationId}/confirm", reservationId)
+				.header("Authorization", "Bearer " + accessToken)
+				.header("Idempotency-Key", UUID.randomUUID().toString())
+				.contentType(APPLICATION_JSON)
+				.content(objectMapper.writeValueAsString(Map.of(
+						"paymentToken", "mock-late-compensation-timeout-unknown"))))
+				.andExpect(status().isConflict());
+		makeReservationExpired(reservationId, 1);
+		assertThat(expirationService.expireNextBatch(1)).isEqualTo(1);
+
+		String gatewayKey = jdbcTemplate.queryForObject("""
+				SELECT gateway_idempotency_key FROM payment_attempts WHERE reservation_id = ?
+				""", String.class, reservationId);
+		String timestamp = Long.toString(Instant.now().getEpochSecond());
+		String body = objectMapper.writeValueAsString(Map.of(
+				"eventType", "PAYMENT_AUTHORIZATION_RESULT",
+				"gatewayIdempotencyKey", gatewayKey,
+				"result", "APPROVED",
+				"gatewayReference", "late-unknown-reference",
+				"occurredAt", Instant.now().toString()));
+		performWebhook("late-unknown-" + UUID.randomUUID(), timestamp, body,
+				webhookSignature(timestamp, body)).andExpect(status().isAccepted());
+
+		assertThat(automaticReconciliationService.reconcileNextBatch()).isEqualTo(1);
+		Map<String, Object> compensation = jdbcTemplate.queryForMap("""
+				SELECT id, gateway_idempotency_key, status, reconciliation_attempts
+				FROM refund_attempts WHERE reservation_id = ?
+				""", reservationId);
+		assertThat(compensation.get("status")).isEqualTo("UNKNOWN");
+		assertThat(((Number) compensation.get("reconciliation_attempts")).intValue())
+				.isEqualTo(1);
+		UUID compensationId = (UUID) compensation.get("id");
+		mockMvc.perform(get("/api/admin/payment-compensations?page=0&size=20"))
+				.andExpect(status().isOk())
+				.andExpect(jsonPath("$.content[0].refundAttemptId")
+						.value(compensationId.toString()))
+				.andExpect(jsonPath("$.content[0].status").value("UNKNOWN"));
+
+		paymentWebhookResultRecorder.recordRefund(
+				compensation.get("gateway_idempotency_key").toString(),
+				RefundGatewayResult.SUCCEEDED,
+				"recovered-compensation-reference");
+		mockMvc.perform(post("/api/admin/payment-compensations/{attemptId}/retry", compensationId))
+				.andExpect(status().isOk())
+				.andExpect(jsonPath("$.status").value("SUCCEEDED"));
+
+		assertThat(reservationStatus(reservationId)).isEqualTo("EXPIRED");
+		assertThat(inventoryQuantity(inventoryId)).isEqualTo(1);
+		reconciliationBacklogMonitor.refresh();
+		mockMvc.perform(get("/actuator/prometheus"))
+				.andExpect(content().string(containsString(
+						"fan_event_payment_compensation_total")))
+				.andExpect(content().string(containsString(
+						"fan_event_payment_compensation_backlog")));
 	}
 
 	@Test

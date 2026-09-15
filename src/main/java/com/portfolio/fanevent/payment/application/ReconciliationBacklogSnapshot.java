@@ -4,6 +4,8 @@ public record ReconciliationBacklogSnapshot(
         long paymentCount,
         long paymentOldestAgeSeconds,
         long refundCount,
-        long refundOldestAgeSeconds
+        long refundOldestAgeSeconds,
+        long compensationCount,
+        long compensationOldestAgeSeconds
 ) {
 }

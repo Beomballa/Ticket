@@ -6,6 +6,7 @@ import com.portfolio.fanevent.payment.application.RefundGatewayResult;
 import com.portfolio.fanevent.payment.application.RefundResult;
 import com.portfolio.fanevent.payment.domain.RefundAttempt;
 import com.portfolio.fanevent.payment.domain.RefundAttemptStatus;
+import com.portfolio.fanevent.payment.domain.RefundPurpose;
 import com.portfolio.fanevent.payment.infrastructure.RefundAttemptRepository;
 import com.portfolio.fanevent.reservation.application.ReservationCancellationFinalizer;
 import com.portfolio.fanevent.reservation.domain.Reservation;
@@ -88,17 +89,19 @@ public class AdminRefundService {
             attempt.decline("대사 결과 환불 요청이 거절되었습니다.", now);
             recordAudit(attempt, adminSubject, "DECLINED");
             metrics.refundReconciliation("declined");
+            recordCompensationMetric(attempt, "declined");
             log.info("refund reconciliation declined: refundAttemptId={}, reservationId={}",
                     attemptId, reservation.getId());
             return result(attempt, reservation, true);
         }
 
         attempt.succeed(gatewayResult.gatewayRefundReference(), now);
-        cancellationFinalizer.complete(reservation, now);
+        completeReservationIfNeeded(attempt, reservation, now);
         recordAudit(attempt, adminSubject, "SUCCEEDED");
         attemptRepository.flush();
         reservationRepository.flush();
         metrics.refundReconciliation("succeeded");
+        recordCompensationMetric(attempt, "succeeded");
         log.info("refund reconciliation succeeded: refundAttemptId={}, reservationId={}",
                 attemptId, reservation.getId());
         return result(attempt, reservation, true);
@@ -110,8 +113,24 @@ public class AdminRefundService {
             Instant now
     ) {
         if (attempt.getStatus() == RefundAttemptStatus.SUCCEEDED && reservation.isConfirmed()) {
-            cancellationFinalizer.complete(reservation, now);
+            completeReservationIfNeeded(attempt, reservation, now);
             reservationRepository.flush();
+        }
+    }
+
+    private void completeReservationIfNeeded(
+            RefundAttempt attempt,
+            Reservation reservation,
+            Instant now
+    ) {
+        if (attempt.getPurpose() == RefundPurpose.RESERVATION_CANCELLATION) {
+            cancellationFinalizer.complete(reservation, now);
+        }
+    }
+
+    private void recordCompensationMetric(RefundAttempt attempt, String result) {
+        if (attempt.getPurpose() == RefundPurpose.LATE_PAYMENT_COMPENSATION) {
+            metrics.lateApprovalCompensation(result);
         }
     }
 
@@ -132,13 +151,16 @@ public class AdminRefundService {
         jdbcTemplate.update("""
                 INSERT INTO audit_logs (
                     actor_member_id, action, target_type, target_id, details)
-                VALUES (?, 'REFUND_RECONCILED', 'REFUND_ATTEMPT', ?,
+                VALUES (?, ?, 'REFUND_ATTEMPT', ?,
                         jsonb_build_object(
                             'reservationId', CAST(? AS bigint),
                             'result', CAST(? AS text),
                             'adminSubject', CAST(? AS text)))
                 """,
                 numericSubject(adminSubject),
+                attempt.getPurpose() == RefundPurpose.LATE_PAYMENT_COMPENSATION
+                        ? "LATE_PAYMENT_COMPENSATION_RECONCILED"
+                        : "REFUND_RECONCILED",
                 attempt.getId().toString(),
                 attempt.getReservationId(),
                 result,

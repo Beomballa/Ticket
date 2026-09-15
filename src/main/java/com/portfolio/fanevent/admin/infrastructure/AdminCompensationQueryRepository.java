@@ -2,8 +2,7 @@ package com.portfolio.fanevent.admin.infrastructure;
 
 import static com.portfolio.fanevent.payment.domain.QRefundAttempt.refundAttempt;
 
-import com.portfolio.fanevent.admin.application.AdminRefundAttemptSummary;
-import com.portfolio.fanevent.payment.domain.RefundAttemptStatus;
+import com.portfolio.fanevent.admin.application.AdminCompensationSummary;
 import com.portfolio.fanevent.payment.domain.RefundPurpose;
 import com.querydsl.core.types.Projections;
 import com.querydsl.jpa.impl.JPAQueryFactory;
@@ -14,36 +13,32 @@ import org.springframework.data.domain.Pageable;
 import org.springframework.stereotype.Repository;
 
 @Repository
-public class AdminRefundQueryRepository {
+public class AdminCompensationQueryRepository {
 
     private final JPAQueryFactory queryFactory;
 
-    public AdminRefundQueryRepository(JPAQueryFactory queryFactory) {
+    public AdminCompensationQueryRepository(JPAQueryFactory queryFactory) {
         this.queryFactory = queryFactory;
     }
 
-    public Page<AdminRefundAttemptSummary> searchUnknown(Pageable pageable) {
-        List<AdminRefundAttemptSummary> content = queryFactory
+    public Page<AdminCompensationSummary> search(Pageable pageable) {
+        List<AdminCompensationSummary> content = queryFactory
                 .select(Projections.constructor(
-                        AdminRefundAttemptSummary.class,
+                        AdminCompensationSummary.class,
                         refundAttempt.id,
                         refundAttempt.reservationId,
                         refundAttempt.paymentAttemptId,
                         refundAttempt.amount,
                         refundAttempt.status,
-                        refundAttempt.gatewayRefundReference,
-                        refundAttempt.lastError,
+                        refundAttempt.reconciliationAttempts,
                         refundAttempt.requestedAt,
                         refundAttempt.resolvedAt,
-                        refundAttempt.reconciliationAttempts,
                         refundAttempt.nextReconciliationAt,
                         refundAttempt.reconciliationLeaseUntil,
-                        refundAttempt.lastReconciliationAt))
+                        refundAttempt.lastError))
                 .from(refundAttempt)
-                .where(
-                        refundAttempt.status.eq(RefundAttemptStatus.UNKNOWN),
-                        refundAttempt.purpose.eq(RefundPurpose.RESERVATION_CANCELLATION))
-                .orderBy(refundAttempt.requestedAt.asc(), refundAttempt.id.asc())
+                .where(refundAttempt.purpose.eq(RefundPurpose.LATE_PAYMENT_COMPENSATION))
+                .orderBy(refundAttempt.requestedAt.desc(), refundAttempt.id.desc())
                 .offset(pageable.getOffset())
                 .limit(pageable.getPageSize())
                 .fetch();
@@ -51,11 +46,8 @@ public class AdminRefundQueryRepository {
         Long total = queryFactory
                 .select(refundAttempt.count())
                 .from(refundAttempt)
-                .where(
-                        refundAttempt.status.eq(RefundAttemptStatus.UNKNOWN),
-                        refundAttempt.purpose.eq(RefundPurpose.RESERVATION_CANCELLATION))
+                .where(refundAttempt.purpose.eq(RefundPurpose.LATE_PAYMENT_COMPENSATION))
                 .fetchOne();
-
         return new PageImpl<>(content, pageable, total == null ? 0 : total);
     }
 }

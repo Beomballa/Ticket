@@ -2,6 +2,7 @@ import { FormEvent, useCallback, useEffect, useState } from 'react'
 import { ApiError, api, authStore, describeError } from './api'
 import { formatCurrency, formatDateTime, statusLabel } from './format'
 import type {
+  CompensationSummary,
   EventDetail,
   EventSummary,
   InventorySummary,
@@ -459,9 +460,11 @@ function AdminConsole({ member, onLogin }: { member: MemberProfile | null; onLog
   const [payments, setPayments] = useState<PaymentAttemptSummary[]>([])
   const [refunds, setRefunds] = useState<RefundAttemptSummary[]>([])
   const [webhooks, setWebhooks] = useState<WebhookInboxSummary[]>([])
+  const [compensations, setCompensations] = useState<CompensationSummary[]>([])
   const [paymentTotal, setPaymentTotal] = useState(0)
   const [refundTotal, setRefundTotal] = useState(0)
   const [webhookTotal, setWebhookTotal] = useState(0)
+  const [compensationTotal, setCompensationTotal] = useState(0)
   const [reconciling, setReconciling] = useState('')
   const [actionNotice, setActionNotice] = useState('')
   const [reservationStatus, setReservationStatus] = useState('')
@@ -474,9 +477,9 @@ function AdminConsole({ member, onLogin }: { member: MemberProfile | null; onLog
     setLoading(true)
     setError('')
     try {
-      const [nextSummary, nextReservations, nextInventory, nextOutbox, nextPayments, nextRefunds, nextWebhooks] = await Promise.all([
+      const [nextSummary, nextReservations, nextInventory, nextOutbox, nextPayments, nextRefunds, nextWebhooks, nextCompensations] = await Promise.all([
         api.operationsSummary(), api.reservations(reservationStatus), api.inventory(soldOut), api.exhaustedOutbox(),
-        api.unknownPayments(), api.unknownRefunds(), api.paymentWebhooks(),
+        api.unknownPayments(), api.unknownRefunds(), api.paymentWebhooks(), api.paymentCompensations(),
       ])
       setSummary(nextSummary)
       setReservations(nextReservations.content)
@@ -485,9 +488,11 @@ function AdminConsole({ member, onLogin }: { member: MemberProfile | null; onLog
       setPayments(nextPayments.content)
       setRefunds(nextRefunds.content)
       setWebhooks(nextWebhooks.content)
+      setCompensations(nextCompensations.content)
       setPaymentTotal(nextPayments.totalElements)
       setRefundTotal(nextRefunds.totalElements)
       setWebhookTotal(nextWebhooks.totalElements)
+      setCompensationTotal(nextCompensations.totalElements)
     } catch (requestError) {
       setError(describeError(requestError))
     } finally {
@@ -525,6 +530,23 @@ function AdminConsole({ member, onLogin }: { member: MemberProfile | null; onLog
       setActionNotice(result.status === 'PROCESSED'
         ? 'PG 웹훅 재처리가 완료되었습니다.'
         : '웹훅을 다시 확인했지만 처리 실패 상태가 유지됩니다.')
+      await load()
+    } catch (requestError) {
+      setError(describeError(requestError))
+    } finally {
+      setReconciling('')
+    }
+  }
+
+  const retryCompensation = async (attemptId: string) => {
+    setReconciling(attemptId)
+    setError('')
+    setActionNotice('')
+    try {
+      const result = await api.retryPaymentCompensation(attemptId)
+      setActionNotice(result.status === 'SUCCEEDED'
+        ? '늦은 승인 보상 환불이 완료되었습니다.'
+        : `보상 환불 상태가 ${compensationStatusLabel[result.status]}(으)로 갱신되었습니다.`)
       await load()
     } catch (requestError) {
       setError(describeError(requestError))
@@ -590,6 +612,15 @@ function AdminConsole({ member, onLogin }: { member: MemberProfile | null; onLog
         )}
       </section>
 
+      <section className="table-card compensation-card">
+        <div className="table-heading"><div><h2>늦은 승인 보상 환불</h2><p>만료 후 확인된 결제 승인을 예약 복원 없이 자동 환불합니다.</p></div><span className="status compensation">{compensationTotal}건</span></div>
+        {loading ? <InlineLoading /> : compensations.length === 0 ? <EmptyState title="보상 환불이 없습니다" description="만료 이후 결제가 승인된 예외 사건이 없습니다." /> : (
+          <div className="table-scroll"><table><thead><tr><th>예약</th><th>금액</th><th>상태</th><th>시도</th><th>발생</th><th>다음 실행</th><th>마지막 오류</th><th /></tr></thead><tbody>
+            {compensations.map((item) => <tr key={item.refundAttemptId}><td>#{item.reservationId}</td><td>{formatCurrency(item.amount)}</td><td><span className={`status ${item.status.toLowerCase()}`}>{compensationStatusLabel[item.status]}</span></td><td>{item.attempts}회</td><td>{formatDateTime(item.requestedAt)}</td><td>{item.nextReconciliationAt ? formatDateTime(item.nextReconciliationAt) : '—'}</td><td className="error-cell" title={item.lastError ?? undefined}>{item.lastError ?? '—'}</td><td>{item.status !== 'SUCCEEDED' && <button className="button ghost small" disabled={reconciling === item.refundAttemptId} onClick={() => void retryCompensation(item.refundAttemptId)}>{reconciling === item.refundAttemptId ? '처리 중…' : '재처리'}</button>}</td></tr>)}
+          </tbody></table></div>
+        )}
+      </section>
+
       <div className="reconciliation-grid">
         <ReconciliationTable
           title="결제 결과 불명"
@@ -637,6 +668,13 @@ const webhookStatusLabel: Record<WebhookInboxSummary['status'], string> = {
   PROCESSING: '처리 중',
   PROCESSED: '완료',
   FAILED: '실패',
+}
+
+const compensationStatusLabel: Record<CompensationSummary['status'], string> = {
+  REQUESTED: '환불 대기',
+  UNKNOWN: '결과 확인 중',
+  SUCCEEDED: '환불 완료',
+  DECLINED: '환불 거절',
 }
 
 interface ReconciliationRow {

@@ -20,6 +20,8 @@ public class OperationalMetrics {
     private final AtomicLong paymentReconciliationOldestAgeSeconds = new AtomicLong();
     private final AtomicLong refundReconciliationBacklog = new AtomicLong();
     private final AtomicLong refundReconciliationOldestAgeSeconds = new AtomicLong();
+    private final AtomicLong lateApprovalCompensationBacklog = new AtomicLong();
+    private final AtomicLong lateApprovalCompensationOldestAgeSeconds = new AtomicLong();
 
     public OperationalMetrics(MeterRegistry registry) {
         this.registry = registry;
@@ -40,6 +42,12 @@ public class OperationalMetrics {
                 .register(registry);
         Gauge.builder("fan.event.refund.reconciliation.oldest.age.seconds",
                         refundReconciliationOldestAgeSeconds, AtomicLong::get)
+                .register(registry);
+        Gauge.builder("fan.event.payment.compensation.backlog",
+                        lateApprovalCompensationBacklog, AtomicLong::get)
+                .register(registry);
+        Gauge.builder("fan.event.payment.compensation.oldest.age.seconds",
+                        lateApprovalCompensationOldestAgeSeconds, AtomicLong::get)
                 .register(registry);
     }
 
@@ -75,6 +83,10 @@ public class OperationalMetrics {
         increment("fan.event.payment.webhook", "type", type, "result", result);
     }
 
+    public void lateApprovalCompensation(String result) {
+        increment("fan.event.payment.compensation", "result", result);
+    }
+
     public void expired(int count) {
         registry.counter("fan.event.reservation.expired").increment(count);
     }
@@ -99,6 +111,11 @@ public class OperationalMetrics {
         this.paymentReconciliationOldestAgeSeconds.set(paymentOldestAgeSeconds);
         refundReconciliationBacklog.set(refundCount);
         this.refundReconciliationOldestAgeSeconds.set(refundOldestAgeSeconds);
+    }
+
+    public void updateCompensationBacklog(long count, long oldestAgeSeconds) {
+        lateApprovalCompensationBacklog.set(count);
+        lateApprovalCompensationOldestAgeSeconds.set(oldestAgeSeconds);
     }
 
     private void increment(String name, String tagName, String tagValue) {

@@ -1,5 +1,6 @@
 import type {
   AuthToken,
+  CompensationSummary,
   EventDetail,
   EventSummary,
   InventorySummary,
@@ -142,6 +143,13 @@ export const api = {
     status: WebhookInboxSummary['status']
     duplicate: boolean
   }>(`/api/admin/payment-webhooks/${eventId}/retry`, { method: 'POST' }),
+  paymentCompensations: () => request<Page<CompensationSummary>>(
+    '/api/admin/payment-compensations?page=0&size=12',
+  ),
+  retryPaymentCompensation: (attemptId: string) => request<CompensationSummary>(
+    `/api/admin/payment-compensations/${attemptId}/retry`,
+    { method: 'POST' },
+  ),
 }
 
 export function describeError(error: unknown): string {
