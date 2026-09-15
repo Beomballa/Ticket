@@ -59,6 +59,17 @@
         {"expr": "sum(rate(fan_event_outbox_manual_retry_total[5m])) by (result)", "legendFormat": "manual retry {{result}}"}
       ],
       "gridPos": {"x": 0, "y": 24, "w": 24, "h": 8}
+    },
+    {
+      "id": 8,
+      "type": "timeseries",
+      "title": "Database connection pool",
+      "targets": [
+        {"expr": "hikaricp_connections_active", "legendFormat": "active {{pool}}"},
+        {"expr": "hikaricp_connections_pending", "legendFormat": "pending {{pool}}"},
+        {"expr": "increase(hikaricp_connections_timeout_total[5m])", "legendFormat": "timeout increase {{pool}}"}
+      ],
+      "gridPos": {"x": 0, "y": 32, "w": 24, "h": 8}
     }
   ]
 }

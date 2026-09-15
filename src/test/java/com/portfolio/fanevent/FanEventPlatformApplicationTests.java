@@ -5,6 +5,7 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.doThrow;
+import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
@@ -62,6 +63,7 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
 import javax.crypto.Mac;
 import javax.crypto.spec.SecretKeySpec;
 import org.junit.jupiter.api.Test;
@@ -85,6 +87,7 @@ import org.springframework.test.context.bean.override.mockito.MockitoSpyBean;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.transaction.support.TransactionTemplate;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 import org.testcontainers.containers.GenericContainer;
 import org.testcontainers.containers.PostgreSQLContainer;
 import org.testcontainers.junit.jupiter.Container;
@@ -919,6 +922,38 @@ class FanEventPlatformApplicationTests {
 		assertThat(((Number) stored.get("version")).longValue()).isEqualTo(1L);
 		assertThat(inventoryQuantity(inventoryId)).isEqualTo(3);
 		assertThat(outboxCount(reservationId, "RESERVATION_CONFIRMED")).isEqualTo(1);
+		assertThat(jdbcTemplate.queryForObject("""
+				SELECT status FROM payment_attempts WHERE reservation_id = ?
+				""", String.class, reservationId)).isEqualTo("APPROVED");
+	}
+
+	@Test
+	void paymentGatewayAuthorizationRunsWithoutHoldingDatabaseTransaction() throws Exception {
+		String accessToken = login(signupUniqueMember("결제 경계 회원"), "secure-password");
+		Long inventoryId = createOnSaleInventory(2, new BigDecimal("18100.00"));
+		Long reservationId = holdReservation(accessToken, inventoryId, 1);
+		AtomicBoolean transactionActiveAtGateway = new AtomicBoolean(true);
+
+		doAnswer(invocation -> {
+			transactionActiveAtGateway.set(
+					TransactionSynchronizationManager.isActualTransactionActive());
+			return invocation.callRealMethod();
+		}).when(paymentGateway).authorize(
+				eq(reservationId),
+				eq(new BigDecimal("18100.00")),
+				eq("mock-approved"),
+				anyString());
+
+		mockMvc.perform(post("/api/reservations/{reservationId}/confirm", reservationId)
+				.header("Authorization", "Bearer " + accessToken)
+				.header("Idempotency-Key", UUID.randomUUID().toString())
+				.contentType(APPLICATION_JSON)
+				.content(objectMapper.writeValueAsString(Map.of(
+						"paymentToken", "mock-approved"))))
+				.andExpect(status().isOk())
+				.andExpect(jsonPath("$.status").value("CONFIRMED"));
+
+		assertThat(transactionActiveAtGateway).isFalse();
 		assertThat(jdbcTemplate.queryForObject("""
 				SELECT status FROM payment_attempts WHERE reservation_id = ?
 				""", String.class, reservationId)).isEqualTo("APPROVED");

@@ -218,6 +218,9 @@ bundle 생성을 실행한다. Gitleaks는 현재 파일만이 아니라 전체 
 ./scripts/run-load-test.sh
 ```
 
+예약 경합 구간은 20 VU·200회 기준 p95 500ms와 예상 외 응답 0건뿐 아니라
+`hikaricp_connections_timeout_total` 증가 0도 자동 판정한다.
+
 ## 문서
 
 - [MVP 데이터 모델](docs/architecture/erd.md)
@@ -245,6 +248,7 @@ bundle 생성을 실행한다. Gitleaks는 현재 파일만이 아니라 전체 
 - [ADR-0022: 예약 만료 후 늦은 승인 보상 환불 Saga](docs/adr/0022-late-payment-compensation-saga.md)
 - [ADR-0023: Redis 대기열과 일회성 입장 토큰](docs/adr/0023-redis-waiting-room-admission-token.md)
 - [ADR-0024: 영속 대기열 정책과 Redis 런타임 복구](docs/adr/0024-persistent-waiting-room-policy.md)
+- [ADR-0025: 결제 확정의 순차 트랜잭션 경계](docs/adr/0025-payment-confirmation-connection-boundary.md)
 - [이벤트 목록 조회 기준선](docs/performance/event-list-baseline.md)
 - [관리자 조회 실행 계획](docs/performance/admin-query-plan.md)
 - [offset과 커서 페이지네이션 비교](docs/performance/reservation-pagination-comparison.md)

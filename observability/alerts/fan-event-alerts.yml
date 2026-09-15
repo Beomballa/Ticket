@@ -25,6 +25,24 @@ groups:
           summary: 전체 API p95가 500ms를 초과했습니다.
           runbook: docs/runbooks/incident-response.md
 
+      - alert: FanEventDatabaseConnectionPending
+        expr: sum(hikaricp_connections_pending) > 0
+        for: 2m
+        labels:
+          severity: warning
+        annotations:
+          summary: DB 연결 대기가 2분 이상 지속되고 있습니다.
+          runbook: docs/runbooks/incident-response.md
+
+      - alert: FanEventDatabaseConnectionTimeout
+        expr: sum(increase(hikaricp_connections_timeout_total[5m])) > 0
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: DB 커넥션 풀 획득 타임아웃이 발생했습니다.
+          runbook: docs/runbooks/incident-response.md
+
       - alert: FanEventOutboxBacklog
         expr: sum(fan_event_outbox_backlog{status=~"pending|failed|processing"}) > 100
         for: 10m

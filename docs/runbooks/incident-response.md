@@ -123,6 +123,29 @@ Authorization: Bearer <admin-token>
 - 재고 수량이 0 이상이고 성공 예약 수와 차감량 일치
 - p95·오류율이 정상 범위에서 10분 유지
 
+## 결제 승인 중 커넥션 풀 포화
+
+### 징후
+
+- `hikaricp_connections_pending`이 0보다 큰 상태로 지속
+- `hikaricp_connections_timeout_total` 증가
+- 예약 확정 API p95 상승 또는 `SQLTransientConnectionException` 발생
+
+### 즉시 대응
+
+1. Grafana의 `Database connection pool`에서 active, pending, timeout 증가량을 같은 시각의 예약 확정 처리량과 비교한다.
+2. 스레드 덤프와 로그에서 PG 승인 호출 중 DB 트랜잭션이 열린 채로 유지되는 경로가 다시 생겼는지 확인한다.
+3. PostgreSQL `pg_stat_activity`에서 장기 트랜잭션과 lock wait를 확인하고, 배포 직후라면 결제 경계 변경을 우선 비교한다.
+4. 단순히 Hikari 최대 크기만 늘리지 않는다. 외부 호출을 감싼 트랜잭션이나 중첩 `REQUIRES_NEW` 점유를 먼저 제거한다.
+5. 수정 후 `LOAD_USERS=20 LOAD_ITERATIONS=200 ./scripts/run-load-test.sh`를 실행한다. 스크립트는 부하 구간의 Hikari timeout 증가를 자동으로 실패 처리한다.
+
+### 복구 판정
+
+- 부하 테스트의 예상 외 응답과 Hikari timeout 증가가 모두 0
+- 예약 확정 p95 500ms 미만
+- 부하 종료 후 `hikaricp_connections_pending`이 0으로 수렴
+- 승인·거절·결과 불명 원장과 예약·Outbox 정합성 회귀 테스트 통과
+
 ## 결제 결과 불명
 
 ### 징후
@@ -254,7 +277,7 @@ Authorization: Bearer <admin-token>
 
 ## 초기 경보 기준
 
-`observability/alerts/fan-event-alerts.yml`은 전체 API p95 500ms, 5xx 5%, Outbox active backlog 100건, Outbox 지속 실패, 예약 rate-limit 거부 20%, 결제·환불 `UNKNOWN`, 늦은 승인 보상 최장 체류 5분과 대기열 정책 Redis 동기화 실패를 초기 기준으로 사용한다. 경보가 발생하면 단일 순간값이 아니라 설정된 지속 시간과 URI별 지표를 먼저 확인한다.
+`observability/alerts/fan-event-alerts.yml`은 전체 API p95 500ms, 5xx 5%, DB 연결 대기 2분과 획득 타임아웃, Outbox active backlog 100건, Outbox 지속 실패, 예약 rate-limit 거부 20%, 결제·환불 `UNKNOWN`, 늦은 승인 보상 최장 체류 5분과 대기열 정책 Redis 동기화 실패를 초기 기준으로 사용한다. 경보가 발생하면 단일 순간값이 아니라 설정된 지속 시간과 URI별 지표를 먼저 확인한다.
 
 이 임계값은 로컬 k6 기준선에서 출발한 값이다. 운영 SLO와 실제 트래픽 분포를 확보한 뒤 경보 민감도와 지속 시간을 조정하고 변경 근거를 사건·용량 계획 문서에 남긴다.
 

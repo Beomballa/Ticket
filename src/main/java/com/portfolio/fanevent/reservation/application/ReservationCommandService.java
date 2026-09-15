@@ -10,18 +10,11 @@ import com.portfolio.fanevent.member.domain.Member;
 import com.portfolio.fanevent.member.infrastructure.MemberRepository;
 import com.portfolio.fanevent.outbox.application.OutboxEventWriter;
 import com.portfolio.fanevent.payment.application.PaymentGateway;
-import com.portfolio.fanevent.payment.application.PaymentAttemptService;
-import com.portfolio.fanevent.payment.application.PaymentAuthorization;
-import com.portfolio.fanevent.payment.application.PaymentDeclinedException;
-import com.portfolio.fanevent.payment.application.PaymentGatewayTimeoutException;
-import com.portfolio.fanevent.payment.application.PaymentResultUnknownException;
 import com.portfolio.fanevent.payment.application.RefundAttemptService;
 import com.portfolio.fanevent.payment.application.RefundDeclinedException;
 import com.portfolio.fanevent.payment.application.RefundGatewayTimeoutException;
 import com.portfolio.fanevent.payment.application.RefundResult;
 import com.portfolio.fanevent.payment.application.RefundResultUnknownException;
-import com.portfolio.fanevent.payment.domain.PaymentAttempt;
-import com.portfolio.fanevent.payment.domain.PaymentAttemptStatus;
 import com.portfolio.fanevent.payment.domain.RefundAttempt;
 import com.portfolio.fanevent.payment.domain.RefundAttemptStatus;
 import com.portfolio.fanevent.reservation.domain.Reservation;
@@ -53,7 +46,7 @@ public class ReservationCommandService {
     private final ReservationProperties properties;
     private final Clock clock;
     private final PaymentGateway paymentGateway;
-    private final PaymentAttemptService paymentAttemptService;
+    private final ReservationConfirmationService confirmationService;
     private final RefundAttemptService refundAttemptService;
     private final IdempotencyService idempotencyService;
     private final RequestFingerprint requestFingerprint;
@@ -69,7 +62,7 @@ public class ReservationCommandService {
             ReservationProperties properties,
             Clock clock,
             PaymentGateway paymentGateway,
-            PaymentAttemptService paymentAttemptService,
+            ReservationConfirmationService confirmationService,
             RefundAttemptService refundAttemptService,
             IdempotencyService idempotencyService,
             RequestFingerprint requestFingerprint,
@@ -84,7 +77,7 @@ public class ReservationCommandService {
         this.properties = properties;
         this.clock = clock;
         this.paymentGateway = paymentGateway;
-        this.paymentAttemptService = paymentAttemptService;
+        this.confirmationService = confirmationService;
         this.refundAttemptService = refundAttemptService;
         this.idempotencyService = idempotencyService;
         this.requestFingerprint = requestFingerprint;
@@ -149,85 +142,14 @@ public class ReservationCommandService {
         return ReservationResult.from(saved);
     }
 
-    @Transactional
     public ReservationResult confirm(
             Long memberId,
             Long reservationId,
             String paymentToken,
             String idempotencyKey
     ) {
-        String fingerprint = requestFingerprint.sha256(
-                reservationId + "|paymentToken=" + paymentToken);
-        return idempotencyService.execute(
-                memberId,
-                "reservation:confirm:" + reservationId,
-                idempotencyKey,
-                fingerprint,
-                200,
-                ReservationResult.class,
-                () -> confirmReservation(
-                        memberId, reservationId, paymentToken, idempotencyKey));
-    }
-
-    private ReservationResult confirmReservation(
-            Long memberId,
-            Long reservationId,
-            String paymentToken,
-            String idempotencyKey
-    ) {
-        Reservation reservation = findOwnedReservation(memberId, reservationId);
-        Instant now = clock.instant();
-        reservation.requireConfirmable(now);
-        if (reservation.isConfirmed()) {
-            return ReservationResult.from(reservation);
-        }
-
-        String paymentTokenFingerprint = requestFingerprint.sha256(paymentToken);
-        String gatewayIdempotencyKey = "reservation-" + reservationId + '-'
-                + requestFingerprint.sha256(idempotencyKey);
-        PaymentAttempt attempt = paymentAttemptService.begin(
-                reservationId,
-                gatewayIdempotencyKey,
-                paymentTokenFingerprint,
-                reservation.getTotalAmount());
-        authorizePayment(reservation, paymentToken, attempt);
-        reservation.confirm(now);
-        outboxEventWriter.appendReservationEvent(
-                reservation, "RESERVATION_CONFIRMED", now);
-        reservationRepository.flush();
-        log.info("reservation confirmed: reservationId={}, memberId={}", reservationId, memberId);
-        return ReservationResult.from(reservation);
-    }
-
-    private void authorizePayment(
-            Reservation reservation,
-            String paymentToken,
-            PaymentAttempt attempt
-    ) {
-        if (attempt.getStatus() == PaymentAttemptStatus.APPROVED) {
-            return;
-        }
-        if (attempt.getStatus() == PaymentAttemptStatus.DECLINED) {
-            throw new PaymentDeclinedException();
-        }
-        if (attempt.getStatus() == PaymentAttemptStatus.UNKNOWN) {
-            throw new PaymentResultUnknownException(attempt.getId());
-        }
-
-        try {
-            PaymentAuthorization authorization = paymentGateway.authorize(
-                    reservation.getId(),
-                    reservation.getTotalAmount(),
-                    paymentToken,
-                    attempt.getGatewayIdempotencyKey());
-            paymentAttemptService.approve(attempt.getId(), authorization.gatewayReference());
-        } catch (PaymentDeclinedException exception) {
-            paymentAttemptService.decline(attempt.getId(), exception.getMessage());
-            throw exception;
-        } catch (PaymentGatewayTimeoutException exception) {
-            paymentAttemptService.markUnknown(attempt.getId(), exception.getMessage());
-            throw new PaymentResultUnknownException(attempt.getId());
-        }
+        return confirmationService.confirm(
+                memberId, reservationId, paymentToken, idempotencyKey);
     }
 
     @Transactional
