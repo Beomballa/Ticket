@@ -70,6 +70,25 @@ export interface ReservationResult {
   }>
 }
 
+export interface WaitingRoomEntry {
+  eventId: number
+  status: 'DISABLED' | 'WAITING' | 'ADMITTED'
+  position: number | null
+  estimatedWaitSeconds: number | null
+  admissionToken: string | null
+  admissionExpiresAt: string | null
+}
+
+export interface WaitingRoomSummary {
+  eventId: number
+  enabled: boolean
+  waitingCount: number
+  admittedCount: number
+  batchSize: number
+  activeCapacity: number
+  admittedLastMinute: number
+}
+
 export interface ReservationSummary {
   reservationId: number
   memberId: number

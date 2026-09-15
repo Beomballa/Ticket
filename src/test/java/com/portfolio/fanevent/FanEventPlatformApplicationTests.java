@@ -41,6 +41,8 @@ import com.portfolio.fanevent.reservation.application.ReservationExpirationServi
 import com.portfolio.fanevent.support.observability.ReconciliationBacklogMonitor;
 import com.portfolio.fanevent.support.persistence.QBaseEntity;
 import com.portfolio.fanevent.support.security.JwtProperties;
+import com.portfolio.fanevent.waitingroom.AdmissionTokenException;
+import com.portfolio.fanevent.waitingroom.WaitingRoomService;
 import com.querydsl.jpa.impl.JPAQueryFactory;
 import jakarta.persistence.EntityManagerFactory;
 import java.math.BigDecimal;
@@ -93,7 +95,8 @@ import org.testcontainers.utility.DockerImageName;
 		"spring.jpa.properties.hibernate.generate_statistics=true",
 		"app.reservation.expiration.initial-delay=PT1H",
 		"app.outbox.initial-delay=PT1H",
-		"app.payment.reconciliation.initial-delay=PT1H"
+		"app.payment.reconciliation.initial-delay=PT1H",
+		"app.waiting-room.initial-delay=PT1H"
 })
 @Testcontainers
 @AutoConfigureMockMvc
@@ -169,6 +172,9 @@ class FanEventPlatformApplicationTests {
 
 	@Autowired
 	private PaymentWebhookResultRecorder paymentWebhookResultRecorder;
+
+	@Autowired
+	private WaitingRoomService waitingRoomService;
 
 	@MockitoSpyBean
 	private PaymentGateway paymentGateway;
@@ -2396,6 +2402,69 @@ class FanEventPlatformApplicationTests {
 
 		assertThat(inventoryQuantity(inventoryId)).isEqualTo(10);
 		assertThat(reservationCountForInventory(inventoryId)).isEqualTo(20);
+	}
+
+	@Test
+	void waitingRoomKeepsFirstOrderAdmitsAtomicallyAndRequiresSingleUseToken() throws Exception {
+		String email = signupUniqueMember("대기열 회원");
+		String accessToken = login(email, "secure-password");
+		Long memberId = memberRepository.findByEmail(email).orElseThrow().getId();
+		Long inventoryId = createOnSaleInventory(3, new BigDecimal("77000.00"));
+		Long eventId = jdbcTemplate.queryForObject("""
+				SELECT session.event_id
+				FROM sellable_inventory inventory
+				JOIN event_sessions session ON session.id = inventory.event_session_id
+				WHERE inventory.id = ?
+				""", Long.class, inventoryId);
+		waitingRoomService.open(eventId);
+
+		mockMvc.perform(post("/api/events/{eventId}/waiting-room", eventId)
+				.header("Authorization", "Bearer " + accessToken))
+				.andExpect(status().isOk())
+				.andExpect(jsonPath("$.status").value("WAITING"))
+				.andExpect(jsonPath("$.position").value(1));
+		mockMvc.perform(post("/api/events/{eventId}/waiting-room", eventId)
+				.header("Authorization", "Bearer " + accessToken))
+				.andExpect(status().isOk())
+				.andExpect(jsonPath("$.position").value(1));
+
+		mockMvc.perform(post("/api/reservations")
+				.header("Authorization", "Bearer " + accessToken)
+				.header("Idempotency-Key", UUID.randomUUID().toString())
+				.contentType(APPLICATION_JSON)
+				.content(reservationRequest(inventoryId, 1)))
+				.andExpect(status().isPreconditionRequired())
+				.andExpect(jsonPath("$.code").value("ADMISSION_TOKEN_REQUIRED"));
+
+		ExecutorService workers = Executors.newFixedThreadPool(2);
+		CountDownLatch start = new CountDownLatch(1);
+		Future<Integer> first = workers.submit(() -> { start.await(); return waitingRoomService.admit(eventId); });
+		Future<Integer> second = workers.submit(() -> { start.await(); return waitingRoomService.admit(eventId); });
+		start.countDown();
+		assertThat(first.get(10, TimeUnit.SECONDS) + second.get(10, TimeUnit.SECONDS)).isEqualTo(1);
+		workers.shutdownNow();
+
+		String admittedBody = mockMvc.perform(get("/api/events/{eventId}/waiting-room", eventId)
+				.header("Authorization", "Bearer " + accessToken))
+				.andExpect(status().isOk())
+				.andExpect(jsonPath("$.status").value("ADMITTED"))
+				.andExpect(jsonPath("$.admissionToken").isString())
+				.andReturn().getResponse().getContentAsString();
+		String admissionToken = objectMapper.readTree(admittedBody).get("admissionToken").asText();
+		String idempotencyKey = UUID.randomUUID().toString();
+		waitingRoomService.claim(admissionToken, memberId, eventId, idempotencyKey);
+		org.junit.jupiter.api.Assertions.assertThrows(AdmissionTokenException.class,
+				() -> waitingRoomService.claim(admissionToken, memberId, eventId, "different-key"));
+
+		mockMvc.perform(post("/api/reservations")
+				.header("Authorization", "Bearer " + accessToken)
+				.header("Idempotency-Key", idempotencyKey)
+				.header("X-Admission-Token", admissionToken)
+				.contentType(APPLICATION_JSON)
+				.content(reservationRequest(inventoryId, 1)))
+				.andExpect(status().isCreated());
+		assertThat(inventoryQuantity(inventoryId)).isEqualTo(2);
+		waitingRoomService.close(eventId);
 	}
 
 	private Long responseId(String responseBody) throws Exception {

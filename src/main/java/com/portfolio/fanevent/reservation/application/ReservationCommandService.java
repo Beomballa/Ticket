@@ -26,6 +26,8 @@ import com.portfolio.fanevent.payment.domain.RefundAttempt;
 import com.portfolio.fanevent.payment.domain.RefundAttemptStatus;
 import com.portfolio.fanevent.reservation.domain.Reservation;
 import com.portfolio.fanevent.reservation.infrastructure.ReservationRepository;
+import com.portfolio.fanevent.waitingroom.AdmissionTokenService;
+import com.portfolio.fanevent.waitingroom.WaitingRoomService;
 import jakarta.persistence.EntityNotFoundException;
 import java.time.Clock;
 import java.time.Instant;
@@ -37,6 +39,8 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionSynchronization;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 
 @Service
 public class ReservationCommandService {
@@ -56,6 +60,7 @@ public class ReservationCommandService {
     private final OutboxEventWriter outboxEventWriter;
     private final PublicEventCacheInvalidator cacheInvalidator;
     private final ReservationCancellationFinalizer cancellationFinalizer;
+    private final WaitingRoomService waitingRoomService;
 
     public ReservationCommandService(
             MemberRepository memberRepository,
@@ -70,7 +75,8 @@ public class ReservationCommandService {
             RequestFingerprint requestFingerprint,
             OutboxEventWriter outboxEventWriter,
             PublicEventCacheInvalidator cacheInvalidator,
-            ReservationCancellationFinalizer cancellationFinalizer
+            ReservationCancellationFinalizer cancellationFinalizer,
+            WaitingRoomService waitingRoomService
     ) {
         this.memberRepository = memberRepository;
         this.inventoryRepository = inventoryRepository;
@@ -85,19 +91,30 @@ public class ReservationCommandService {
         this.outboxEventWriter = outboxEventWriter;
         this.cacheInvalidator = cacheInvalidator;
         this.cancellationFinalizer = cancellationFinalizer;
+        this.waitingRoomService = waitingRoomService;
     }
 
     @Transactional
     public ReservationResult hold(
             Long memberId,
             List<ReservationItemCommand> commands,
-            String idempotencyKey
+            String idempotencyKey,
+            String admissionToken
     ) {
         validateCommands(commands);
+        List<Long> eventIds = resolveEvents(commands);
+        List<Long> protectedEventIds = eventIds.stream().filter(waitingRoomService::isOpen).toList();
+        if (protectedEventIds.size() > 1 || (!protectedEventIds.isEmpty() && eventIds.size() > 1)) {
+            throw new IllegalArgumentException("대기열 적용 이벤트는 다른 이벤트와 한 예약에 담을 수 없습니다.");
+        }
+        AdmissionTokenService.AdmissionClaims admission = protectedEventIds.isEmpty()
+                ? null
+                : waitingRoomService.claim(
+                        admissionToken, memberId, protectedEventIds.getFirst(), idempotencyKey);
         Member member = memberRepository.findById(memberId)
                 .orElseThrow(() -> new EntityNotFoundException("회원을 찾을 수 없습니다: " + memberId));
         String fingerprint = requestFingerprint.sha256(canonicalHoldRequest(commands));
-        return idempotencyService.execute(
+        ReservationResult result = idempotencyService.execute(
                 memberId,
                 "reservation:create",
                 idempotencyKey,
@@ -105,6 +122,12 @@ public class ReservationCommandService {
                 201,
                 ReservationResult.class,
                 () -> createPendingReservation(member, commands));
+        completeAdmissionAfterCommit(admission, idempotencyKey);
+        return result;
+    }
+
+    public ReservationResult hold(Long memberId, List<ReservationItemCommand> commands, String idempotencyKey) {
+        return hold(memberId, commands, idempotencyKey, null);
     }
 
     private ReservationResult createPendingReservation(
@@ -301,5 +324,27 @@ public class ReservationCommandService {
                 .map(command -> command.inventoryId() + ":" + command.quantity())
                 .reduce((left, right) -> left + "|" + right)
                 .orElseThrow();
+    }
+
+    private List<Long> resolveEvents(List<ReservationItemCommand> commands) {
+        List<Long> eventIds = inventoryRepository.findDistinctEventIds(
+                commands.stream().map(ReservationItemCommand::inventoryId).toList());
+        if (eventIds.isEmpty()) {
+            throw new EntityNotFoundException("예약할 재고를 찾을 수 없습니다.");
+        }
+        return eventIds;
+    }
+
+    private void completeAdmissionAfterCommit(
+            AdmissionTokenService.AdmissionClaims admission,
+            String idempotencyKey
+    ) {
+        if (admission == null) return;
+        TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
+            @Override
+            public void afterCommit() {
+                waitingRoomService.complete(admission, idempotencyKey);
+            }
+        });
     }
 }

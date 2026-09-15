@@ -136,6 +136,13 @@ Inbox에 저장한다. 같은 event ID·같은 본문 재전달은 기존 결과
 보상 상태·시도·오류를 확인하고 `POST /api/admin/payment-compensations/{attemptId}/retry`로
 긴급 재처리할 수 있다. 보상 성공은 이미 반환된 재고와 만료 예약 상태를 변경하지 않는다.
 
+인기 이벤트는 운영자가 이벤트별 Redis 대기열을 열어 예약 트래픽을 평탄화할 수 있다. 참가 순서는
+Redis 단조 증가 sequence로 정하고 재참가에도 최초 순서를 유지한다. Lua script가 배치 크기와 활성 정원을
+동시에 확인해 여러 서버의 입장 작업이 겹쳐도 정원을 넘지 않는다. 입장 회원에게는 이벤트·회원·만료가
+서명된 2분 토큰을 발급하며 예약 생성의 `X-Admission-Token`에서 검증한다. 토큰은 한 멱등키에만 claim되어
+동일 요청 재시도는 허용하고 다른 예약으로의 재사용은 거부한다. 운영 콘솔은 대기·활성 입장·최근 1분
+처리량을 표시하며 Redis 장애 시 보호 이벤트 예약은 `503 WAITING_ROOM_UNAVAILABLE`로 닫힌다.
+
 인증 사용자는 `GET /api/reservations`에서 상태·생성 기간별로 자신의 예약만 조회하고,
 `GET /api/reservations/{id}`에서 공연·회차·재고·수량과 요청 당시 가격 스냅샷을 확인한다.
 목록은 QueryDSL 집계 Projection으로 본문과 count를 각각 한 번 실행하고, 상세는 소유권을 포함한
@@ -234,6 +241,7 @@ bundle 생성을 실행한다. Gitleaks는 현재 파일만이 아니라 전체 
 - [ADR-0020: 결과 불명 자동 대사 임대와 백오프](docs/adr/0020-automatic-reconciliation.md)
 - [ADR-0021: 서명 검증 PG 웹훅 Inbox와 멱등 처리](docs/adr/0021-signed-payment-webhook-inbox.md)
 - [ADR-0022: 예약 만료 후 늦은 승인 보상 환불 Saga](docs/adr/0022-late-payment-compensation-saga.md)
+- [ADR-0023: Redis 대기열과 일회성 입장 토큰](docs/adr/0023-redis-waiting-room-admission-token.md)
 - [이벤트 목록 조회 기준선](docs/performance/event-list-baseline.md)
 - [관리자 조회 실행 계획](docs/performance/admin-query-plan.md)
 - [offset과 커서 페이지네이션 비교](docs/performance/reservation-pagination-comparison.md)

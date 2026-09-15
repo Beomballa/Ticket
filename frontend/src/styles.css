@@ -99,6 +99,10 @@ input, select { border: 1px solid var(--line); background: white; border-radius:
 .stock-row { padding: 15px 16px; display: flex; align-items: center; justify-content: space-between; gap: 16px; border-top: 1px solid var(--line); }
 .reservation-panel { margin-top: 28px; padding: 24px; display: flex; flex-direction: column; gap: 8px; border-radius: var(--radius); background: #f7f5ff; border: 1px solid #ddd5ff; }
 .reservation-panel h3, .reservation-panel p { margin: 0; }
+.waiting-room-card { margin: 22px 0; padding: 20px; border: 1px solid #d9d1ff; border-radius: var(--radius); background: #f7f5ff; }
+.waiting-room-card h3 { margin: 7px 0 10px; }
+.waiting-room-card > p { color: var(--muted); font-size: 13px; }
+.waiting-room-card .button { width: 100%; margin-top: 8px; }
 .reservation-total { margin-top: 12px; font-size: 30px; }
 
 .auth-overlay { justify-content: center; align-items: center; padding: 20px; }
@@ -137,6 +141,7 @@ input, select { border: 1px solid var(--line); background: white; border-radius:
 .outbox-card { margin-top: 20px; }
 .webhook-card { margin-top: 20px; }
 .compensation-card { margin-top: 20px; }
+.waiting-room-admin-card { margin-top: 20px; }
 .reconciliation-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; margin-top: 20px; }
 .action-notice { margin: 0 0 20px; padding: 12px 14px; border: 1px solid #b7e2cc; border-radius: 11px; color: #17613d; background: #f1fbf6; font-size: 13px; }
 .error-cell { max-width: 260px; overflow: hidden; text-overflow: ellipsis; }

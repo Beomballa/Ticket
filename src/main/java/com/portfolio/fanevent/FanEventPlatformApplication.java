@@ -8,6 +8,7 @@ import com.portfolio.fanevent.payment.webhook.PaymentWebhookProperties;
 import com.portfolio.fanevent.reservation.application.ReservationExpirationProperties;
 import com.portfolio.fanevent.reservation.application.ReservationProperties;
 import com.portfolio.fanevent.reservation.application.ReservationRateLimitProperties;
+import com.portfolio.fanevent.waitingroom.WaitingRoomProperties;
 import org.springframework.boot.SpringApplication;
 import org.springframework.boot.autoconfigure.SpringBootApplication;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
@@ -23,7 +24,8 @@ import org.springframework.scheduling.annotation.EnableScheduling;
 		IdempotencyProperties.class,
 		OutboxProperties.class,
 		ReconciliationProperties.class,
-		PaymentWebhookProperties.class
+		PaymentWebhookProperties.class,
+		WaitingRoomProperties.class
 })
 public class FanEventPlatformApplication {
 

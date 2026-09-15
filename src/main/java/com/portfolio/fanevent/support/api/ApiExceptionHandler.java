@@ -14,6 +14,8 @@ import com.portfolio.fanevent.payment.webhook.WebhookEventConflictException;
 import com.portfolio.fanevent.payment.webhook.WebhookRejectedException;
 import com.portfolio.fanevent.reservation.application.RateLimitExceededException;
 import com.portfolio.fanevent.support.observability.OperationalMetrics;
+import com.portfolio.fanevent.waitingroom.AdmissionTokenException;
+import com.portfolio.fanevent.waitingroom.WaitingRoomUnavailableException;
 import jakarta.persistence.EntityNotFoundException;
 import java.util.List;
 import org.slf4j.MDC;
@@ -145,6 +147,18 @@ public class ApiExceptionHandler {
     @ExceptionHandler(EntityNotFoundException.class)
     ResponseEntity<ApiError> handleNotFound(EntityNotFoundException exception) {
         return error(HttpStatus.NOT_FOUND, "RESOURCE_NOT_FOUND", exception.getMessage(), List.of());
+    }
+
+    @ExceptionHandler(AdmissionTokenException.class)
+    ResponseEntity<ApiError> handleAdmissionToken(AdmissionTokenException exception) {
+        HttpStatus status = "ADMISSION_TOKEN_REQUIRED".equals(exception.getCode())
+                ? HttpStatus.PRECONDITION_REQUIRED : HttpStatus.FORBIDDEN;
+        return error(status, exception.getCode(), exception.getMessage(), List.of());
+    }
+
+    @ExceptionHandler(WaitingRoomUnavailableException.class)
+    ResponseEntity<ApiError> handleWaitingRoomUnavailable(WaitingRoomUnavailableException exception) {
+        return error(HttpStatus.SERVICE_UNAVAILABLE, "WAITING_ROOM_UNAVAILABLE", exception.getMessage(), List.of());
     }
 
     private ResponseEntity<ApiError> error(

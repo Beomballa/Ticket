@@ -79,6 +79,7 @@ public class ReservationController {
     ReservationResult hold(
             @AuthenticationPrincipal Jwt jwt,
             @RequestHeader("Idempotency-Key") String idempotencyKey,
+            @RequestHeader(value = "X-Admission-Token", required = false) String admissionToken,
             @Valid @RequestBody CreateReservationRequest request
     ) {
         Long memberId = Long.valueOf(jwt.getSubject());
@@ -88,7 +89,8 @@ public class ReservationController {
                 request.items().stream()
                         .map(item -> new ReservationItemCommand(item.inventoryId(), item.quantity()))
                         .toList(),
-                idempotencyKey);
+                idempotencyKey,
+                admissionToken);
     }
 
     @PostMapping("/{reservationId}/confirm")

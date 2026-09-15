@@ -16,6 +16,8 @@ import type {
   ReservationResult,
   ReservationSummary,
   WebhookInboxSummary,
+  WaitingRoomEntry,
+  WaitingRoomSummary,
 } from './types'
 
 const TOKEN_KEY = 'fan-event.access-token'
@@ -81,12 +83,21 @@ export const api = {
       body: JSON.stringify({ email, password }),
     }),
   me: () => request<MemberProfile>('/api/members/me'),
-  hold: (inventoryId: number, quantity: number) =>
+  hold: (inventoryId: number, quantity: number, admissionToken?: string, idempotencyKey = crypto.randomUUID()) =>
     request<ReservationResult>('/api/reservations', {
       method: 'POST',
-      headers: { 'Idempotency-Key': crypto.randomUUID() },
+      headers: {
+        'Idempotency-Key': idempotencyKey,
+        ...(admissionToken ? { 'X-Admission-Token': admissionToken } : {}),
+      },
       body: JSON.stringify({ items: [{ inventoryId, quantity }] }),
     }),
+  joinWaitingRoom: (eventId: number) => request<WaitingRoomEntry>(
+    `/api/events/${eventId}/waiting-room`, { method: 'POST' },
+  ),
+  waitingRoomStatus: (eventId: number) => request<WaitingRoomEntry>(
+    `/api/events/${eventId}/waiting-room`,
+  ),
   confirm: (reservationId: number) =>
     request<ReservationResult>(`/api/reservations/${reservationId}/confirm`, {
       method: 'POST',
@@ -103,6 +114,7 @@ export const api = {
   reservationDetail: (reservationId: number) =>
     request<MemberReservationDetail>(`/api/reservations/${reservationId}`),
   operationsSummary: () => request<OperationsSummary>('/api/admin/reservations/summary'),
+  waitingRooms: () => request<WaitingRoomSummary[]>('/api/admin/waiting-rooms'),
   reservations: (status = '') => {
     const query = new URLSearchParams({ page: '0', size: '12' })
     if (status) query.set('status', status)

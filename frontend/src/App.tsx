@@ -1,4 +1,4 @@
-import { FormEvent, useCallback, useEffect, useState } from 'react'
+import { FormEvent, useCallback, useEffect, useRef, useState } from 'react'
 import { ApiError, api, authStore, describeError } from './api'
 import { formatCurrency, formatDateTime, statusLabel } from './format'
 import type {
@@ -17,6 +17,8 @@ import type {
   ReservationStatus,
   ReservationSummary,
   WebhookInboxSummary,
+  WaitingRoomEntry,
+  WaitingRoomSummary,
 } from './types'
 
 type View = 'events' | 'reservations' | 'admin'
@@ -216,12 +218,39 @@ function EventDrawer({
   const [reservation, setReservation] = useState<ReservationResult | null>(null)
   const [pending, setPending] = useState(false)
   const [error, setError] = useState('')
+  const [waitingRoom, setWaitingRoom] = useState<WaitingRoomEntry | null>(null)
+  const [queuedInventoryId, setQueuedInventoryId] = useState<number | null>(null)
+  const reservationKey = useRef(crypto.randomUUID())
 
   const run = async (operation: () => Promise<ReservationResult>) => {
     setPending(true)
     setError('')
     try {
       setReservation(await operation())
+      await onChanged()
+    } catch (requestError) {
+      if (requestError instanceof ApiError && requestError.status === 401) onLogin()
+      setError(describeError(requestError))
+    } finally {
+      setPending(false)
+    }
+  }
+
+  const reserve = async (inventoryId: number, refresh = false) => {
+    if (!member) return onLogin()
+    setPending(true)
+    setError('')
+    try {
+      if (!waitingRoom || queuedInventoryId !== inventoryId) reservationKey.current = crypto.randomUUID()
+      const entry = refresh
+        ? await api.waitingRoomStatus(event.id)
+        : await api.joinWaitingRoom(event.id)
+      setWaitingRoom(entry)
+      setQueuedInventoryId(inventoryId)
+      if (entry.status === 'WAITING') return
+      setReservation(await api.hold(inventoryId, 1, entry.admissionToken ?? undefined, reservationKey.current))
+      setWaitingRoom(null)
+      reservationKey.current = crypto.randomUUID()
       await onChanged()
     } catch (requestError) {
       if (requestError instanceof ApiError && requestError.status === 401) onLogin()
@@ -241,6 +270,13 @@ function EventDrawer({
           <h2 id="event-title">{event.title}</h2>
           <p className="muted">{event.description}</p>
           {error && <ErrorPanel message={error} />}
+          {waitingRoom?.status === 'WAITING' && (
+            <section className="waiting-room-card" role="status">
+              <div><p className="eyebrow">WAITING ROOM</p><h3>{waitingRoom.position ? `${waitingRoom.position}번째로 기다리는 중` : '입장 순서를 확인하는 중'}</h3></div>
+              <p>예상 대기 {waitingRoom.estimatedWaitSeconds ?? 0}초 · 순번은 처음 참가한 시점 그대로 유지됩니다.</p>
+              <button className="button primary" disabled={pending || queuedInventoryId === null} onClick={() => queuedInventoryId && void reserve(queuedInventoryId, true)}>{pending ? '확인 중…' : '입장 상태 새로고침'}</button>
+            </section>
+          )}
 
           {reservation ? (
             <ReservationPanel reservation={reservation} pending={pending} onConfirm={() => run(() => api.confirm(reservation.id))} onCancel={() => run(() => api.cancel(reservation.id))} />
@@ -255,7 +291,7 @@ function EventDrawer({
                       <button
                         className="button primary small"
                         disabled={pending || stock.availableQuantity === 0}
-                        onClick={() => member ? run(() => api.hold(stock.id, 1)) : onLogin()}
+                        onClick={() => void reserve(stock.id)}
                       >{stock.availableQuantity === 0 ? '매진' : '1매 예약'}</button>
                     </div>
                   ))}
@@ -461,6 +497,7 @@ function AdminConsole({ member, onLogin }: { member: MemberProfile | null; onLog
   const [refunds, setRefunds] = useState<RefundAttemptSummary[]>([])
   const [webhooks, setWebhooks] = useState<WebhookInboxSummary[]>([])
   const [compensations, setCompensations] = useState<CompensationSummary[]>([])
+  const [waitingRooms, setWaitingRooms] = useState<WaitingRoomSummary[]>([])
   const [paymentTotal, setPaymentTotal] = useState(0)
   const [refundTotal, setRefundTotal] = useState(0)
   const [webhookTotal, setWebhookTotal] = useState(0)
@@ -477,9 +514,9 @@ function AdminConsole({ member, onLogin }: { member: MemberProfile | null; onLog
     setLoading(true)
     setError('')
     try {
-      const [nextSummary, nextReservations, nextInventory, nextOutbox, nextPayments, nextRefunds, nextWebhooks, nextCompensations] = await Promise.all([
+      const [nextSummary, nextReservations, nextInventory, nextOutbox, nextPayments, nextRefunds, nextWebhooks, nextCompensations, nextWaitingRooms] = await Promise.all([
         api.operationsSummary(), api.reservations(reservationStatus), api.inventory(soldOut), api.exhaustedOutbox(),
-        api.unknownPayments(), api.unknownRefunds(), api.paymentWebhooks(), api.paymentCompensations(),
+        api.unknownPayments(), api.unknownRefunds(), api.paymentWebhooks(), api.paymentCompensations(), api.waitingRooms(),
       ])
       setSummary(nextSummary)
       setReservations(nextReservations.content)
@@ -489,6 +526,7 @@ function AdminConsole({ member, onLogin }: { member: MemberProfile | null; onLog
       setRefunds(nextRefunds.content)
       setWebhooks(nextWebhooks.content)
       setCompensations(nextCompensations.content)
+      setWaitingRooms(nextWaitingRooms)
       setPaymentTotal(nextPayments.totalElements)
       setRefundTotal(nextRefunds.totalElements)
       setWebhookTotal(nextWebhooks.totalElements)
@@ -564,6 +602,15 @@ function AdminConsole({ member, onLogin }: { member: MemberProfile | null; onLog
         <div><p className="eyebrow">OPERATIONS</p><h1>예약 운영 콘솔</h1><p className="muted">예약 상태와 한정 재고를 같은 기준으로 확인합니다.</p></div>
         <button className="button dark" disabled={loading} onClick={() => void load()}>새로고침</button>
       </div>
+
+      <section className="table-card waiting-room-admin-card">
+        <div className="table-heading"><div><h2>실시간 예매 대기열</h2><p>Redis 원자 입장 · 최근 1분 처리량</p></div><span className="status processing">{waitingRooms.length}개 운영</span></div>
+        {loading ? <InlineLoading /> : waitingRooms.length === 0 ? <EmptyState title="운영 중인 대기열이 없습니다" description="대기열을 연 인기 이벤트가 여기에 표시됩니다." /> : (
+          <div className="table-scroll"><table><thead><tr><th>이벤트</th><th>대기</th><th>입장 활성</th><th>활성 정원</th><th>최근 1분 입장</th></tr></thead><tbody>
+            {waitingRooms.map((room) => <tr key={room.eventId}><td>#{room.eventId}</td><td>{room.waitingCount}명</td><td>{room.admittedCount}명</td><td>{room.activeCapacity}명</td><td>{room.admittedLastMinute}명</td></tr>)}
+          </tbody></table></div>
+        )}
+      </section>
       {error && <ErrorPanel message={error} retry={load} />}
       {actionNotice && <div className="action-notice" role="status">{actionNotice}</div>}
       <div className="metric-grid">

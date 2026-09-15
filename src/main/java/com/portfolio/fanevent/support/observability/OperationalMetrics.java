@@ -87,6 +87,14 @@ public class OperationalMetrics {
         increment("fan.event.payment.compensation", "result", result);
     }
 
+    public void waitingRoom(String operation, String result) {
+        increment("fan.event.waiting.room", "operation", operation, "result", result);
+    }
+
+    public void waitingRoomAdmissions(int count) {
+        registry.counter("fan.event.waiting.room.admitted").increment(count);
+    }
+
     public void expired(int count) {
         registry.counter("fan.event.reservation.expired").increment(count);
     }
