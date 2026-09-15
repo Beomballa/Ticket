@@ -188,3 +188,17 @@ export interface ReconcileResult {
   reservationStatus: ReservationStatus
   resolved: boolean
 }
+
+export interface WebhookInboxSummary {
+  id: string
+  providerEventId: string
+  eventType: 'PAYMENT_AUTHORIZATION_RESULT' | 'REFUND_RESULT'
+  result: 'APPROVED' | 'DECLINED' | 'SUCCEEDED'
+  status: 'RECEIVED' | 'PROCESSING' | 'PROCESSED' | 'FAILED'
+  attempts: number
+  occurredAt: string
+  receivedAt: string
+  processedAt: string | null
+  processingLeaseUntil: string | null
+  lastError: string | null
+}

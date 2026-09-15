@@ -69,6 +69,7 @@ public class OpenApiConfiguration {
                         example("멱등키 재사용", "IDEMPOTENCY_KEY_REUSED", "같은 멱등키가 다른 요청에 사용되었습니다."),
                         example("결제 결과 확인 중", "PAYMENT_RESULT_UNKNOWN", "결제 승인 결과를 확인 중입니다."),
                         example("환불 결과 확인 중", "REFUND_RESULT_UNKNOWN", "환불 결과를 확인 중입니다."),
+                        example("웹훅 이벤트 충돌", "WEBHOOK_EVENT_CONFLICT", "같은 PG event ID에 다른 payload가 전달되었습니다."),
                         example("동시 재고 변경", "INVENTORY_CONFLICT", "재고를 확인한 뒤 다시 시도해 주세요.")))
                 .addResponses("UnprocessableEntity", apiErrorResponse(
                         "결제 또는 환불 거절",
@@ -95,6 +96,10 @@ public class OpenApiConfiguration {
                             && !operation.getSecurity().isEmpty();
                     if (protectedOperation || "login".equals(operation.getOperationId())) {
                         addResponse(operation.getResponses(), "401", "Unauthorized");
+                    }
+                    if (path.startsWith("/api/payment/webhooks/")) {
+                        addResponse(operation.getResponses(), "401", "Unauthorized");
+                        addResponse(operation.getResponses(), "409", "Conflict");
                     }
                     if (path.startsWith("/api/admin/")) {
                         addResponse(operation.getResponses(), "403", "Forbidden");
@@ -158,7 +163,7 @@ public class OpenApiConfiguration {
     GroupedOpenApi publicApi(OpenApiCustomizer commonErrorResponseCustomizer) {
         return GroupedOpenApi.builder()
                 .group("public")
-                .pathsToMatch("/api/auth/**", "/api/events/**")
+                .pathsToMatch("/api/auth/**", "/api/events/**", "/api/payment/webhooks/**")
                 .addOpenApiCustomizer(commonErrorResponseCustomizer)
                 .build();
     }

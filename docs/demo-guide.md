@@ -12,7 +12,7 @@
 docker compose exec -T postgres psql -U fan_event -d fan_event < scripts/demo-data.sql
 ```
 
-`http://localhost:8080/swagger-ui.html`에서 공개·회원·관리자 API 그룹과 요청·응답 스키마를 확인한다.
+`http://localhost:8080/swagger-ui.html`에서 공개·회원·관리자 API 그룹과 요청·응답 스키마를 확인한다. 운영 콘솔에서는 PG 웹훅 Inbox의 최근 처리 상태와 실패 재처리 버튼도 확인할 수 있다.
 Authorize에 로그인 응답의 JWT를 넣으면 보호 API를 문서에서 직접 호출할 수 있다. 실제 토큰이나
 운영 계정 정보는 화면 캡처·문서·Git에 저장하지 않는다.
 

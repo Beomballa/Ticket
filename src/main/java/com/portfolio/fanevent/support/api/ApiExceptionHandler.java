@@ -10,6 +10,8 @@ import com.portfolio.fanevent.payment.application.PaymentDeclinedException;
 import com.portfolio.fanevent.payment.application.PaymentResultUnknownException;
 import com.portfolio.fanevent.payment.application.RefundDeclinedException;
 import com.portfolio.fanevent.payment.application.RefundResultUnknownException;
+import com.portfolio.fanevent.payment.webhook.WebhookEventConflictException;
+import com.portfolio.fanevent.payment.webhook.WebhookRejectedException;
 import com.portfolio.fanevent.reservation.application.RateLimitExceededException;
 import com.portfolio.fanevent.support.observability.OperationalMetrics;
 import jakarta.persistence.EntityNotFoundException;
@@ -29,6 +31,18 @@ public class ApiExceptionHandler {
 
     public ApiExceptionHandler(OperationalMetrics metrics) {
         this.metrics = metrics;
+    }
+
+    @ExceptionHandler(WebhookRejectedException.class)
+    ResponseEntity<ApiError> handleWebhookRejected(WebhookRejectedException exception) {
+        metrics.paymentWebhook("request", "rejected");
+        return error(HttpStatus.UNAUTHORIZED, exception.getCode(), exception.getMessage(), List.of());
+    }
+
+    @ExceptionHandler(WebhookEventConflictException.class)
+    ResponseEntity<ApiError> handleWebhookConflict(WebhookEventConflictException exception) {
+        metrics.paymentWebhook("request", "conflict");
+        return error(HttpStatus.CONFLICT, "WEBHOOK_EVENT_CONFLICT", exception.getMessage(), List.of());
     }
 
     @ExceptionHandler(OutboxManualRetryRejectedException.class)

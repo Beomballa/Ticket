@@ -10,13 +10,14 @@ import com.portfolio.fanevent.payment.application.RefundDeclinedException;
 import com.portfolio.fanevent.payment.application.RefundGatewayResult;
 import com.portfolio.fanevent.payment.application.RefundGatewayTimeoutException;
 import com.portfolio.fanevent.payment.application.RefundResult;
+import com.portfolio.fanevent.payment.webhook.PaymentWebhookResultRecorder;
 import java.math.BigDecimal;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 import org.springframework.stereotype.Component;
 
 @Component
-public class MockPaymentGateway implements PaymentGateway {
+public class MockPaymentGateway implements PaymentGateway, PaymentWebhookResultRecorder {
 
     public static final String APPROVED_TOKEN = "mock-approved";
     public static final String TIMEOUT_APPROVED_TOKEN = "mock-timeout-approved";
@@ -28,8 +29,10 @@ public class MockPaymentGateway implements PaymentGateway {
     public static final String REFUND_TIMEOUT_UNKNOWN_TOKEN = "mock-refund-timeout-unknown";
 
     private final Map<String, PaymentGatewayResult> results = new ConcurrentHashMap<>();
+    private final Map<String, String> paymentReferences = new ConcurrentHashMap<>();
     private final Map<Long, RefundScenario> refundScenarios = new ConcurrentHashMap<>();
     private final Map<String, RefundGatewayResult> refundResults = new ConcurrentHashMap<>();
+    private final Map<String, String> refundReferences = new ConcurrentHashMap<>();
 
     @Override
     public PaymentAuthorization authorize(
@@ -71,7 +74,8 @@ public class MockPaymentGateway implements PaymentGateway {
         PaymentGatewayResult result = results.getOrDefault(
                 gatewayIdempotencyKey, PaymentGatewayResult.UNKNOWN);
         String reference = result == PaymentGatewayResult.APPROVED
-                ? "mock-reconciled-" + gatewayIdempotencyKey
+                ? paymentReferences.getOrDefault(
+                        gatewayIdempotencyKey, "mock-reconciled-" + gatewayIdempotencyKey)
                 : null;
         return new PaymentReconciliationResult(result, reference);
     }
@@ -115,9 +119,34 @@ public class MockPaymentGateway implements PaymentGateway {
         RefundGatewayResult result = refundResults.getOrDefault(
                 gatewayIdempotencyKey, RefundGatewayResult.UNKNOWN);
         String reference = result == RefundGatewayResult.SUCCEEDED
-                ? "mock-refund-reconciled-" + gatewayIdempotencyKey
+                ? refundReferences.getOrDefault(
+                        gatewayIdempotencyKey, "mock-refund-reconciled-" + gatewayIdempotencyKey)
                 : null;
         return new RefundResult(result, reference);
+    }
+
+    @Override
+    public void recordPayment(
+            String gatewayKey,
+            PaymentGatewayResult result,
+            String reference
+    ) {
+        results.put(gatewayKey, result);
+        if (reference != null && !reference.isBlank()) {
+            paymentReferences.put(gatewayKey, reference);
+        }
+    }
+
+    @Override
+    public void recordRefund(
+            String gatewayKey,
+            RefundGatewayResult result,
+            String reference
+    ) {
+        refundResults.put(gatewayKey, result);
+        if (reference != null && !reference.isBlank()) {
+            refundReferences.put(gatewayKey, reference);
+        }
     }
 
     private PaymentAuthorization existingAuthorization(

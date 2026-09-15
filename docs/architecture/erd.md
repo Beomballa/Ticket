@@ -14,6 +14,7 @@ erDiagram
     RESERVATIONS ||--o{ PAYMENT_ATTEMPTS : pays
     RESERVATIONS ||--o| REFUND_ATTEMPTS : refunds
     PAYMENT_ATTEMPTS ||--o| REFUND_ATTEMPTS : refunded_by
+    PAYMENT_ATTEMPTS ||--o{ PAYMENT_WEBHOOK_INBOX : reconciled_by
     SELLABLE_INVENTORY ||--o{ RESERVATION_ITEMS : reserves
     OUTBOX_EVENTS ||--o{ CONSUMED_OUTBOX_EVENTS : consumed_by
 
@@ -79,6 +80,17 @@ erDiagram
         timestamptz reconciliation_lease_until
         bigint version
     }
+    PAYMENT_WEBHOOK_INBOX {
+        uuid id PK
+        varchar provider_event_id UK
+        varchar payload_hash
+        jsonb payload
+        varchar event_type
+        varchar gateway_idempotency_key
+        varchar status
+        integer attempts
+        timestamptz processing_lease_until
+    }
     IDEMPOTENCY_REQUESTS {
         bigint id PK
         bigint member_id FK
@@ -116,6 +128,7 @@ erDiagram
 - 예약별 환불 시도는 한 건이며 결과 불명 동안 예약은 `CONFIRMED`, 재고는 선점 상태를 유지한다.
 - 환불 성공이 확인된 트랜잭션에서만 예약 취소·재고 반환·Outbox를 함께 반영한다.
 - 자동 대사는 만료 가능한 처리 임대와 다음 실행 시각으로 다중 인스턴스 중복 조회와 장애 고착을 막는다.
+- 서명을 통과한 PG 웹훅은 event ID와 payload hash로 멱등성을 판정하고, Inbox 임대 시도 번호가 늦은 작업자의 상태 덮어쓰기를 막는다.
 - 만료 조회와 Outbox 폴링은 부분 인덱스로 활성 상태만 탐색한다.
 - Outbox 소비 이력은 소비자명·이벤트 ID 조합으로 유일해 DB 부작용의 중복 반영을 막는다.
 - 애플리케이션 상태 전이는 도메인 로직이, 값의 최소 안전선은 DB 제약조건이 보호한다.

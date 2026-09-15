@@ -15,6 +15,7 @@ import type {
   ReservationResult,
   ReservationStatus,
   ReservationSummary,
+  WebhookInboxSummary,
 } from './types'
 
 type View = 'events' | 'reservations' | 'admin'
@@ -457,8 +458,10 @@ function AdminConsole({ member, onLogin }: { member: MemberProfile | null; onLog
   const [outbox, setOutbox] = useState<OutboxEventSummary[]>([])
   const [payments, setPayments] = useState<PaymentAttemptSummary[]>([])
   const [refunds, setRefunds] = useState<RefundAttemptSummary[]>([])
+  const [webhooks, setWebhooks] = useState<WebhookInboxSummary[]>([])
   const [paymentTotal, setPaymentTotal] = useState(0)
   const [refundTotal, setRefundTotal] = useState(0)
+  const [webhookTotal, setWebhookTotal] = useState(0)
   const [reconciling, setReconciling] = useState('')
   const [actionNotice, setActionNotice] = useState('')
   const [reservationStatus, setReservationStatus] = useState('')
@@ -471,9 +474,9 @@ function AdminConsole({ member, onLogin }: { member: MemberProfile | null; onLog
     setLoading(true)
     setError('')
     try {
-      const [nextSummary, nextReservations, nextInventory, nextOutbox, nextPayments, nextRefunds] = await Promise.all([
+      const [nextSummary, nextReservations, nextInventory, nextOutbox, nextPayments, nextRefunds, nextWebhooks] = await Promise.all([
         api.operationsSummary(), api.reservations(reservationStatus), api.inventory(soldOut), api.exhaustedOutbox(),
-        api.unknownPayments(), api.unknownRefunds(),
+        api.unknownPayments(), api.unknownRefunds(), api.paymentWebhooks(),
       ])
       setSummary(nextSummary)
       setReservations(nextReservations.content)
@@ -481,8 +484,10 @@ function AdminConsole({ member, onLogin }: { member: MemberProfile | null; onLog
       setOutbox(nextOutbox.content)
       setPayments(nextPayments.content)
       setRefunds(nextRefunds.content)
+      setWebhooks(nextWebhooks.content)
       setPaymentTotal(nextPayments.totalElements)
       setRefundTotal(nextRefunds.totalElements)
+      setWebhookTotal(nextWebhooks.totalElements)
     } catch (requestError) {
       setError(describeError(requestError))
     } finally {
@@ -503,6 +508,23 @@ function AdminConsole({ member, onLogin }: { member: MemberProfile | null; onLog
       setActionNotice(result.resolved
         ? `대사가 완료되었습니다. 예약 상태: ${statusLabel[result.reservationStatus]}`
         : 'PG 결과가 아직 확인되지 않아 자동 재시도를 유지합니다.')
+      await load()
+    } catch (requestError) {
+      setError(describeError(requestError))
+    } finally {
+      setReconciling('')
+    }
+  }
+
+  const retryWebhook = async (eventId: string) => {
+    setReconciling(eventId)
+    setError('')
+    setActionNotice('')
+    try {
+      const result = await api.retryPaymentWebhook(eventId)
+      setActionNotice(result.status === 'PROCESSED'
+        ? 'PG 웹훅 재처리가 완료되었습니다.'
+        : '웹훅을 다시 확인했지만 처리 실패 상태가 유지됩니다.')
       await load()
     } catch (requestError) {
       setError(describeError(requestError))
@@ -559,6 +581,15 @@ function AdminConsole({ member, onLogin }: { member: MemberProfile | null; onLog
         )}
       </section>
 
+      <section className="table-card webhook-card">
+        <div className="table-heading"><div><h2>PG 웹훅 Inbox</h2><p>서명 검증을 통과한 결제·환불 결과와 멱등 처리 상태입니다.</p></div><span className="status received">{webhookTotal}건</span></div>
+        {loading ? <InlineLoading /> : webhooks.length === 0 ? <EmptyState title="수신한 웹훅이 없습니다" description="PG 결과가 도착하면 최근 내역이 여기에 표시됩니다." /> : (
+          <div className="table-scroll"><table><thead><tr><th>PG 이벤트</th><th>구분</th><th>결과</th><th>상태</th><th>시도</th><th>수신</th><th>마지막 오류</th><th /></tr></thead><tbody>
+            {webhooks.map((item) => <tr key={item.id} title={item.providerEventId}><td className="event-id-cell">{item.providerEventId}</td><td>{item.eventType === 'REFUND_RESULT' ? '환불' : '결제 승인'}</td><td>{item.result}</td><td><span className={`status ${item.status.toLowerCase()}`}>{webhookStatusLabel[item.status]}</span></td><td>{item.attempts}회</td><td>{formatDateTime(item.receivedAt)}</td><td className="error-cell" title={item.lastError ?? undefined}>{item.lastError ?? '—'}</td><td>{item.status === 'FAILED' && <button className="button ghost small" disabled={reconciling === item.id} onClick={() => void retryWebhook(item.id)}>{reconciling === item.id ? '처리 중…' : '재처리'}</button>}</td></tr>)}
+          </tbody></table></div>
+        )}
+      </section>
+
       <div className="reconciliation-grid">
         <ReconciliationTable
           title="결제 결과 불명"
@@ -599,6 +630,13 @@ function AdminConsole({ member, onLogin }: { member: MemberProfile | null; onLog
       </div>
     </section>
   )
+}
+
+const webhookStatusLabel: Record<WebhookInboxSummary['status'], string> = {
+  RECEIVED: '수신',
+  PROCESSING: '처리 중',
+  PROCESSED: '완료',
+  FAILED: '실패',
 }
 
 interface ReconciliationRow {

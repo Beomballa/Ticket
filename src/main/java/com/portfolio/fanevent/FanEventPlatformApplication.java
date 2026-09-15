@@ -4,6 +4,7 @@ import com.portfolio.fanevent.idempotency.application.IdempotencyProperties;
 import com.portfolio.fanevent.catalog.application.PublicEventCacheProperties;
 import com.portfolio.fanevent.outbox.application.OutboxProperties;
 import com.portfolio.fanevent.payment.application.ReconciliationProperties;
+import com.portfolio.fanevent.payment.webhook.PaymentWebhookProperties;
 import com.portfolio.fanevent.reservation.application.ReservationExpirationProperties;
 import com.portfolio.fanevent.reservation.application.ReservationProperties;
 import com.portfolio.fanevent.reservation.application.ReservationRateLimitProperties;
@@ -21,7 +22,8 @@ import org.springframework.scheduling.annotation.EnableScheduling;
 		PublicEventCacheProperties.class,
 		IdempotencyProperties.class,
 		OutboxProperties.class,
-		ReconciliationProperties.class
+		ReconciliationProperties.class,
+		PaymentWebhookProperties.class
 })
 public class FanEventPlatformApplication {
 

@@ -34,6 +34,7 @@ flowchart LR
 | PG 승인 응답 유실 | 결제 시도 원장·PG 멱등키·UNKNOWN 대사 | 승인 호출 1회, 관리자 대사 후 예약·Outbox 1회 확정 |
 | PG 환불 응답 유실 | 환불 시도 원장·예약별 PG 멱등키·UNKNOWN 대사 | 결과 확인 전 재고 유지, 성공 대사 후 취소·재고 반환 1회 |
 | 결과 불명 원장의 장기 고착 | 만료 임대·`SKIP LOCKED` 자동 대사·지수 백오프 | 동시 작업자 단일 선점, 임대 회수, 체류 시간 경보 통합 테스트 |
+| PG 웹훅 위조·중복·처리 유실 | HMAC 검증·PostgreSQL Inbox·event ID/payload hash 멱등성 | 위조·시차·중복·충돌·임대 회수·실패 재처리 통합 테스트 |
 | 만료 예약의 중복 재고 반환 | `FOR UPDATE SKIP LOCKED` 배치 선점 | 복수 작업자와 롤백 재실행 테스트 |
 | 상태 변경과 후속 처리 유실 | Transactional Outbox + 소비 이력 | 실패 백오프·임대 회수·중복 소비 테스트 |
 | 관리자 다조건 조회 | QueryDSL DTO projection과 전용 인덱스 | 10,000건 실행 계획과 SQL 횟수 검증 |
@@ -48,7 +49,7 @@ flowchart LR
 
 - PostgreSQL 조건부 UPDATE와 `FOR UPDATE SKIP LOCKED`를 적용해 고경합 한정 재고의 초과 판매를 방지하고, 예약 만료를 다중 인스턴스에서 안전하게 병렬 처리했습니다.
 - JPA 쓰기 모델과 QueryDSL 읽기 모델을 분리하고 50,000건 데이터로 cursor pagination을 측정해 깊은 페이지 p50을 3.067ms에서 0.213ms로 개선했습니다.
-- 멱등키, 결제·환불 결과 불명 자동 대사, Transactional Outbox와 Redis 장애 fallback을 구축하고 Testcontainers 통합 테스트로 동시 선점·임대 회수·백오프·응답 유실 시나리오를 검증했습니다.
+- 멱등키, 서명 PG 웹훅 Inbox, 결제·환불 결과 불명 자동 대사와 Transactional Outbox를 구축하고 Testcontainers로 중복 전달·임대 회수·백오프·응답 유실 시나리오를 검증했습니다.
 
 ## 면접용 STAR 이야기
 
@@ -75,11 +76,12 @@ flowchart LR
 3. 같은 예약을 모의 결제로 확정한 뒤 관리자 계정으로 전환한다.
 4. 내 예약 목록과 상세에서 상태·공연·회차·가격 스냅샷을 확인한다.
 5. 운영 콘솔에서 확정 건수, 매출, 최근 예약, 잔여 재고를 확인한다.
-6. 테스트의 경쟁 재고·멱등·Outbox 시나리오와 실행 결과를 보여준다.
+6. 운영 콘솔의 PG 웹훅 Inbox와 실패 재처리, 테스트의 위조·중복·충돌 시나리오를 보여준다.
 7. Swagger UI의 대상별 계약과 Grafana·cursor 실행 계획·장애 복구 런북으로 설계 판단을 마무리한다.
 
 ## 남은 위험과 확장 순서
 
 - 데모 UI의 토큰 저장소를 HttpOnly cookie 기반 BFF로 변경한다.
-- 결제 gateway를 외부 sandbox와 연결하고 승인·환불 webhook 서명, 부분 환불과 멱등성을 검증한다.
+- 결제 gateway를 외부 sandbox와 연결하고 키 회전, 부분 환불과 멱등성을 검증한다.
+- 예약 만료 뒤 늦은 승인 결과를 자동 환불하는 보상 Saga를 추가한다.
 - 운영 topology에서 장시간 부하를 재측정하고 실제 SLO에 맞춰 경보 기준을 조정한다.

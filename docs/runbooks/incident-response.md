@@ -162,6 +162,37 @@ Authorization: Bearer <admin-token>
 - 거절 건은 예약 `CONFIRMED`와 기존 재고 수량 유지
 - 같은 `refundAttemptId` 재대사에도 추가 환불·재고 반환·Outbox가 생성되지 않음
 
+## PG 웹훅 처리 실패
+
+### 징후
+
+- `fan_event_payment_webhook_total{result="rejected|conflict|failed"}` 증가
+- 운영 콘솔의 PG 웹훅 Inbox에 `FAILED` 이벤트 누적
+- 결제·환불 `UNKNOWN` backlog가 웹훅 도착 이후에도 감소하지 않음
+
+### 즉시 대응
+
+1. `providerEventId`, `traceId`, Inbox의 `lastError`로 요청과 대상 PG 멱등키를 확인한다. 저장된 원문이나 서명 비밀값은 로그에 출력하지 않는다.
+2. `rejected`이면 서버·PG 시계 오차, 서명 대상 원문과 `PG_WEBHOOK_SECRET`의 배포 버전을 확인한다. 허용 시차를 임의로 넓히기 전에 시계를 정상화한다.
+3. `conflict`이면 같은 event ID에 서로 다른 body가 전달된 것이므로 재처리하지 않고 PG 전송 이력을 확인한다.
+4. `FAILED`는 원장의 대상 존재 여부와 예약 상태를 확인한 뒤 운영 콘솔의 `재처리` 또는 다음 API를 사용한다.
+
+```http
+GET /api/admin/payment-webhooks?page=0&size=20
+Authorization: Bearer <admin-token>
+
+POST /api/admin/payment-webhooks/{eventId}/retry
+Authorization: Bearer <admin-token>
+```
+
+5. `PROCESSING`이 30초 이상 유지되면 임대 만료 뒤 재처리한다. DB에서 상태를 직접 완료 처리하지 않는다.
+
+### 복구 판정
+
+- Inbox가 `PROCESSED`로 수렴하고 동일 event ID 재전달의 attempts가 증가하지 않음
+- 결제 승인 또는 환불 성공의 예약·재고·Outbox 부작용이 각각 한 번만 반영됨
+- `UNKNOWN` backlog와 자동 대사 최장 체류 시간이 정상 범위로 감소
+
 ## 초기 경보 기준
 
 `observability/alerts/fan-event-alerts.yml`은 전체 API p95 500ms, 5xx 5%, Outbox active backlog 100건, Outbox 지속 실패, 예약 rate-limit 거부 20%, 결제·환불 `UNKNOWN` 최장 체류 5분을 초기 기준으로 사용한다. 경보가 발생하면 단일 순간값이 아니라 설정된 5~10분 지속 여부와 URI별 지표를 먼저 확인한다.

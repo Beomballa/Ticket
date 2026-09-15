@@ -71,6 +71,10 @@ public class OperationalMetrics {
         increment("fan.event.reconciliation.automatic", "type", type, "result", result);
     }
 
+    public void paymentWebhook(String type, String result) {
+        increment("fan.event.payment.webhook", "type", type, "result", result);
+    }
+
     public void expired(int count) {
         registry.counter("fan.event.reservation.expired").increment(count);
     }

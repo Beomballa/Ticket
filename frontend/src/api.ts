@@ -14,6 +14,7 @@ import type {
   RefundAttemptSummary,
   ReservationResult,
   ReservationSummary,
+  WebhookInboxSummary,
 } from './types'
 
 const TOKEN_KEY = 'fan-event.access-token'
@@ -132,6 +133,15 @@ export const api = {
     `/api/admin/refund-attempts/${refundAttemptId}/reconcile`,
     { method: 'POST' },
   ),
+  paymentWebhooks: () => request<Page<WebhookInboxSummary>>(
+    '/api/admin/payment-webhooks?page=0&size=12',
+  ),
+  retryPaymentWebhook: (eventId: string) => request<{
+    id: string
+    providerEventId: string
+    status: WebhookInboxSummary['status']
+    duplicate: boolean
+  }>(`/api/admin/payment-webhooks/${eventId}/retry`, { method: 'POST' }),
 }
 
 export function describeError(error: unknown): string {

@@ -8,4 +8,6 @@ import org.springframework.data.jpa.repository.JpaRepository;
 public interface RefundAttemptRepository extends JpaRepository<RefundAttempt, UUID> {
 
     Optional<RefundAttempt> findByReservationId(Long reservationId);
+
+    Optional<RefundAttempt> findByGatewayIdempotencyKey(String gatewayIdempotencyKey);
 }

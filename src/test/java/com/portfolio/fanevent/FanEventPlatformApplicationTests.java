@@ -34,6 +34,7 @@ import com.portfolio.fanevent.payment.application.PaymentGateway;
 import com.portfolio.fanevent.payment.application.AutomaticReconciliationService;
 import com.portfolio.fanevent.payment.application.ReconciliationCandidate;
 import com.portfolio.fanevent.payment.infrastructure.ReconciliationLeaseRepository;
+import com.portfolio.fanevent.payment.webhook.PaymentWebhookInboxStore;
 import com.portfolio.fanevent.reservation.application.ReservationExpirationService;
 import com.portfolio.fanevent.support.observability.ReconciliationBacklogMonitor;
 import com.portfolio.fanevent.support.persistence.QBaseEntity;
@@ -41,11 +42,13 @@ import com.portfolio.fanevent.support.security.JwtProperties;
 import com.querydsl.jpa.impl.JPAQueryFactory;
 import jakarta.persistence.EntityManagerFactory;
 import java.math.BigDecimal;
-import java.time.Instant;
+import java.nio.charset.StandardCharsets;
 import java.time.Duration;
+import java.time.Instant;
 import java.time.temporal.ChronoUnit;
 import java.util.ArrayList;
 import java.util.HashSet;
+import java.util.HexFormat;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -55,6 +58,8 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
+import javax.crypto.Mac;
+import javax.crypto.spec.SecretKeySpec;
 import org.junit.jupiter.api.Test;
 import org.hibernate.SessionFactory;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -71,6 +76,7 @@ import org.springframework.security.oauth2.jwt.JwtClaimsSet;
 import org.springframework.security.oauth2.jwt.JwtEncoder;
 import org.springframework.security.oauth2.jwt.JwtEncoderParameters;
 import org.springframework.test.web.servlet.MockMvc;
+import org.springframework.test.web.servlet.ResultActions;
 import org.springframework.test.context.bean.override.mockito.MockitoSpyBean;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.annotation.Transactional;
@@ -156,6 +162,9 @@ class FanEventPlatformApplicationTests {
 	@Autowired
 	private ReconciliationLeaseRepository reconciliationLeaseRepository;
 
+	@Autowired
+	private PaymentWebhookInboxStore paymentWebhookInboxStore;
+
 	@MockitoSpyBean
 	private PaymentGateway paymentGateway;
 
@@ -175,11 +184,11 @@ class FanEventPlatformApplicationTests {
 				    'members', 'artists', 'events', 'event_sessions', 'sellable_inventory',
 				    'reservations', 'reservation_items', 'idempotency_requests',
 				    'outbox_events', 'consumed_outbox_events', 'audit_logs',
-				    'payment_attempts', 'refund_attempts'
+				    'payment_attempts', 'refund_attempts', 'payment_webhook_inbox'
 				  )
 				""", Integer.class);
 
-		assertThat(tableCount).isEqualTo(13);
+		assertThat(tableCount).isEqualTo(14);
 	}
 
 	@Test
@@ -236,12 +245,19 @@ class FanEventPlatformApplicationTests {
 						.value("#/components/responses/Conflict"))
 				.andExpect(jsonPath("$.paths['/api/admin/refund-attempts/unknown'].get").exists())
 				.andExpect(jsonPath("$.paths['/api/admin/refund-attempts/{refundAttemptId}/reconcile'].post.responses['409']['$ref']")
-						.value("#/components/responses/Conflict"));
+						.value("#/components/responses/Conflict"))
+				.andExpect(jsonPath("$.paths['/api/payment/webhooks/mock'].post.responses['401']['$ref']")
+						.value("#/components/responses/Unauthorized"))
+				.andExpect(jsonPath("$.paths['/api/payment/webhooks/mock'].post.responses['409']['$ref']")
+						.value("#/components/responses/Conflict"))
+				.andExpect(jsonPath("$.paths['/api/admin/payment-webhooks'].get").exists())
+				.andExpect(jsonPath("$.paths['/api/admin/payment-webhooks/{eventId}/retry'].post").exists());
 
 		mockMvc.perform(get("/v3/api-docs/public"))
 				.andExpect(status().isOk())
 				.andExpect(jsonPath("$.paths['/api/auth/login'].post.security").doesNotExist())
 				.andExpect(jsonPath("$.paths['/api/events']").exists())
+				.andExpect(jsonPath("$.paths['/api/payment/webhooks/mock'].post.security").doesNotExist())
 				.andExpect(jsonPath("$.paths['/api/reservations']").doesNotExist());
 
 		mockMvc.perform(get("/v3/api-docs/member"))
@@ -1107,6 +1123,140 @@ class FanEventPlatformApplicationTests {
 	}
 
 	@Test
+	void signedPaymentWebhookIsProcessedOnceAndRejectsForgeryAndPayloadConflict() throws Exception {
+		String accessToken = login(signupUniqueMember("결제 웹훅 회원"), "secure-password");
+		Long inventoryId = createOnSaleInventory(2, new BigDecimal("29300.00"));
+		Long reservationId = holdReservation(accessToken, inventoryId, 1);
+
+		mockMvc.perform(post("/api/reservations/{reservationId}/confirm", reservationId)
+				.header("Authorization", "Bearer " + accessToken)
+				.header("Idempotency-Key", UUID.randomUUID().toString())
+				.contentType(APPLICATION_JSON)
+				.content(objectMapper.writeValueAsString(Map.of(
+						"paymentToken", "mock-timeout-unknown"))))
+				.andExpect(status().isConflict());
+		Map<String, Object> attempt = jdbcTemplate.queryForMap("""
+				SELECT id, gateway_idempotency_key
+				FROM payment_attempts WHERE reservation_id = ?
+				""", reservationId);
+		String gatewayKey = attempt.get("gateway_idempotency_key").toString();
+		String eventId = "payment-event-" + UUID.randomUUID();
+		String timestamp = Long.toString(Instant.now().getEpochSecond());
+		String body = objectMapper.writeValueAsString(Map.of(
+				"eventType", "PAYMENT_AUTHORIZATION_RESULT",
+				"gatewayIdempotencyKey", gatewayKey,
+				"result", "APPROVED",
+				"gatewayReference", "webhook-payment-reference",
+				"occurredAt", Instant.now().toString()));
+
+		performWebhook(eventId, timestamp, body, webhookSignature(timestamp, body))
+				.andExpect(status().isAccepted())
+				.andExpect(jsonPath("$.status").value("PROCESSED"))
+				.andExpect(jsonPath("$.duplicate").value(false));
+		performWebhook(eventId, timestamp, body, webhookSignature(timestamp, body))
+				.andExpect(status().isAccepted())
+				.andExpect(jsonPath("$.status").value("PROCESSED"))
+				.andExpect(jsonPath("$.duplicate").value(true));
+
+		String conflictingBody = body.replace("APPROVED", "DECLINED");
+		performWebhook(eventId, timestamp, conflictingBody,
+				webhookSignature(timestamp, conflictingBody))
+				.andExpect(status().isConflict())
+				.andExpect(jsonPath("$.code").value("WEBHOOK_EVENT_CONFLICT"));
+		performWebhook("forged-" + UUID.randomUUID(), timestamp, body, "v1=00")
+				.andExpect(status().isUnauthorized())
+				.andExpect(jsonPath("$.code").value("WEBHOOK_SIGNATURE_INVALID"));
+		String staleTimestamp = Long.toString(Instant.now().minus(10, ChronoUnit.MINUTES)
+				.getEpochSecond());
+		performWebhook("stale-" + UUID.randomUUID(), staleTimestamp, body,
+				webhookSignature(staleTimestamp, body))
+				.andExpect(status().isUnauthorized())
+				.andExpect(jsonPath("$.code").value("WEBHOOK_TIMESTAMP_EXPIRED"));
+
+		assertThat(reservationStatus(reservationId)).isEqualTo("CONFIRMED");
+		assertThat(outboxCount(reservationId, "RESERVATION_CONFIRMED")).isEqualTo(1);
+		assertThat(jdbcTemplate.queryForObject("""
+				SELECT count(*) FROM payment_webhook_inbox WHERE provider_event_id = ?
+				""", Integer.class, eventId)).isEqualTo(1);
+		assertThat(jdbcTemplate.queryForObject("""
+				SELECT attempts FROM payment_webhook_inbox WHERE provider_event_id = ?
+				""", Integer.class, eventId)).isEqualTo(1);
+		assertThat(jdbcTemplate.queryForObject("""
+				SELECT count(*) FROM audit_logs
+				WHERE action = 'PAYMENT_RECONCILED'
+				  AND target_id = ?
+				  AND details ->> 'adminSubject' = 'system:pg-webhook'
+				""", Integer.class, attempt.get("id").toString())).isEqualTo(1);
+		mockMvc.perform(get("/actuator/prometheus"))
+				.andExpect(content().string(containsString("fan_event_payment_webhook_total")));
+	}
+
+	@Test
+	@WithMockUser(username = "admin-test", roles = "ADMIN")
+	void failedPaymentWebhookIsRetriedFromAdminInbox() throws Exception {
+		String accessToken = login(signupUniqueMember("웹훅 재처리 회원"), "secure-password");
+		Long inventoryId = createOnSaleInventory(1, new BigDecimal("29400.00"));
+		Long reservationId = holdReservation(accessToken, inventoryId, 1);
+
+		mockMvc.perform(post("/api/reservations/{reservationId}/confirm", reservationId)
+				.header("Authorization", "Bearer " + accessToken)
+				.header("Idempotency-Key", UUID.randomUUID().toString())
+				.contentType(APPLICATION_JSON)
+				.content(objectMapper.writeValueAsString(Map.of(
+						"paymentToken", "mock-timeout-unknown"))))
+				.andExpect(status().isConflict());
+		String gatewayKey = jdbcTemplate.queryForObject("""
+				SELECT gateway_idempotency_key FROM payment_attempts WHERE reservation_id = ?
+				""", String.class, reservationId);
+		makeReservationExpired(reservationId, 1);
+		String eventId = "retry-event-" + UUID.randomUUID();
+		String timestamp = Long.toString(Instant.now().getEpochSecond());
+		String body = objectMapper.writeValueAsString(Map.of(
+				"eventType", "PAYMENT_AUTHORIZATION_RESULT",
+				"gatewayIdempotencyKey", gatewayKey,
+				"result", "APPROVED",
+				"gatewayReference", "retry-payment-reference",
+				"occurredAt", Instant.now().toString()));
+
+		performWebhook(eventId, timestamp, body, webhookSignature(timestamp, body))
+				.andExpect(status().isAccepted())
+				.andExpect(jsonPath("$.status").value("FAILED"));
+		UUID inboxId = jdbcTemplate.queryForObject("""
+				SELECT id FROM payment_webhook_inbox WHERE provider_event_id = ?
+				""", UUID.class, eventId);
+		jdbcTemplate.update("""
+				UPDATE payment_webhook_inbox
+				SET status = 'PROCESSING', processing_lease_until = ?
+				WHERE id = ?
+				""", java.sql.Timestamp.from(Instant.now().minusSeconds(1)), inboxId);
+		int recoveredAttempt = paymentWebhookInboxStore.claim(inboxId);
+		assertThat(recoveredAttempt).isEqualTo(2);
+		paymentWebhookInboxStore.markProcessed(inboxId, 1);
+		assertThat(jdbcTemplate.queryForObject(
+				"SELECT status FROM payment_webhook_inbox WHERE id = ?",
+				String.class, inboxId)).isEqualTo("PROCESSING");
+		paymentWebhookInboxStore.markFailed(inboxId, recoveredAttempt, "worker recovery test");
+		jdbcTemplate.update(
+				"UPDATE reservations SET expires_at = ? WHERE id = ?",
+				java.sql.Timestamp.from(Instant.now().plus(10, ChronoUnit.MINUTES)),
+				reservationId);
+
+		mockMvc.perform(get("/api/admin/payment-webhooks?page=0&size=20"))
+				.andExpect(status().isOk())
+				.andExpect(jsonPath("$.content[0].id").value(inboxId.toString()))
+				.andExpect(jsonPath("$.content[0].status").value("FAILED"))
+				.andExpect(jsonPath("$.content[0].attempts").value(2));
+		mockMvc.perform(post("/api/admin/payment-webhooks/{eventId}/retry", inboxId))
+				.andExpect(status().isOk())
+				.andExpect(jsonPath("$.status").value("PROCESSED"));
+
+		assertThat(reservationStatus(reservationId)).isEqualTo("CONFIRMED");
+		assertThat(jdbcTemplate.queryForObject("""
+				SELECT attempts FROM payment_webhook_inbox WHERE id = ?
+				""", Integer.class, inboxId)).isEqualTo(3);
+	}
+
+	@Test
 	void automaticPaymentReconciliationUsesBackoffAndRecoversExpiredLease() throws Exception {
 		String accessToken = login(signupUniqueMember("자동 대사 재시도 회원"), "secure-password");
 		Long inventoryId = createOnSaleInventory(2, new BigDecimal("29500.00"));
@@ -1392,6 +1542,39 @@ class FanEventPlatformApplicationTests {
 				  AND target_id = ?
 				  AND details ->> 'adminSubject' = 'system:auto-reconciliation'
 				""", Integer.class, attemptId.toString())).isEqualTo(1);
+	}
+
+	@Test
+	void signedRefundWebhookCompletesCancellationOnce() throws Exception {
+		String accessToken = login(signupUniqueMember("환불 웹훅 회원"), "secure-password");
+		Long inventoryId = createOnSaleInventory(2, new BigDecimal("32600.00"));
+		Long reservationId = holdReservation(accessToken, inventoryId, 1);
+		confirmReservation(accessToken, reservationId, "mock-refund-timeout-unknown");
+		mockMvc.perform(post("/api/reservations/{reservationId}/cancel", reservationId)
+				.header("Authorization", "Bearer " + accessToken))
+				.andExpect(status().isConflict());
+		String gatewayKey = jdbcTemplate.queryForObject("""
+				SELECT gateway_idempotency_key FROM refund_attempts WHERE reservation_id = ?
+				""", String.class, reservationId);
+		String eventId = "refund-event-" + UUID.randomUUID();
+		String timestamp = Long.toString(Instant.now().getEpochSecond());
+		String body = objectMapper.writeValueAsString(Map.of(
+				"eventType", "REFUND_RESULT",
+				"gatewayIdempotencyKey", gatewayKey,
+				"result", "SUCCEEDED",
+				"gatewayReference", "webhook-refund-reference",
+				"occurredAt", Instant.now().toString()));
+
+		performWebhook(eventId, timestamp, body, webhookSignature(timestamp, body))
+				.andExpect(status().isAccepted())
+				.andExpect(jsonPath("$.status").value("PROCESSED"));
+		performWebhook(eventId, timestamp, body, webhookSignature(timestamp, body))
+				.andExpect(status().isAccepted())
+				.andExpect(jsonPath("$.duplicate").value(true));
+
+		assertThat(reservationStatus(reservationId)).isEqualTo("CANCELLED");
+		assertThat(inventoryQuantity(inventoryId)).isEqualTo(2);
+		assertThat(outboxCount(reservationId, "RESERVATION_CANCELLED")).isEqualTo(1);
 	}
 
 	@Test
@@ -2246,6 +2429,30 @@ class FanEventPlatformApplicationTests {
 				  AND target_id = ?
 				  AND details ->> 'reservationId' = ?
 				""", Integer.class, reservationId.toString(), reservationId.toString());
+	}
+
+	private ResultActions performWebhook(
+			String eventId,
+			String timestamp,
+			String body,
+			String signature
+	) throws Exception {
+		return mockMvc.perform(post("/api/payment/webhooks/mock")
+				.header("X-PG-Event-Id", eventId)
+				.header("X-PG-Timestamp", timestamp)
+				.header("X-PG-Signature", signature)
+				.contentType(APPLICATION_JSON)
+				.content(body));
+	}
+
+	private String webhookSignature(String timestamp, String body) throws Exception {
+		Mac mac = Mac.getInstance("HmacSHA256");
+		mac.init(new SecretKeySpec(
+				"local-webhook-signing-key".getBytes(StandardCharsets.UTF_8),
+				"HmacSHA256"));
+		byte[] signature = mac.doFinal(
+				(timestamp + "." + body).getBytes(StandardCharsets.UTF_8));
+		return "v1=" + HexFormat.of().formatHex(signature);
 	}
 
 	private void markExistingOutboxPublished() {

@@ -78,6 +78,10 @@ app:
     base-retry-delay: PT1S
     max-retry-delay: PT1M
   payment:
+    webhook:
+      secret: ${PG_WEBHOOK_SECRET:local-webhook-signing-key}
+      timestamp-tolerance: PT5M
+      processing-timeout: PT30S
     reconciliation:
       enabled: true
       initial-delay: PT30S

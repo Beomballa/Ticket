@@ -77,6 +77,7 @@ Prometheus는 `http://localhost:9090`, 사전 구성된 Grafana 대시보드는
 
 ```bash
 export JWT_SECRET='replace-with-a-production-secret-at-least-32-bytes'
+export PG_WEBHOOK_SECRET='replace-with-a-random-webhook-signing-secret'
 ```
 
 인증 API는 `POST /api/auth/signup`, `POST /api/auth/login`이며 로그인 응답의 Access Token을
@@ -118,6 +119,15 @@ PG 조회 중에는 선점 잠금을 점유하지 않는다. 아직 결과가 �
 계속 사용할 수 있다. 간격과 배치 크기는 `app.payment.reconciliation.*`에서 조정한다.
 관리자 운영 콘솔은 결제·환불별 결과 불명 건수, 자동 시도 횟수, 다음 실행 시각과 현재 임대 상태를
 표시하며 긴급 건은 화면의 `지금 대사` 버튼으로 기존 관리자 대사 API를 실행할 수 있다.
+
+모의 PG의 확정 결과는 `POST /api/payment/webhooks/mock`으로도 수신한다. `X-PG-Timestamp`와 원문
+body를 `timestamp.body`로 결합한 HMAC-SHA256 값을 `X-PG-Signature: v1=<hex>`로 전달하고,
+`X-PG-Event-Id`는 이벤트마다 고유해야 한다. 서명과 5분 허용 시차를 통과한 본문만 PostgreSQL
+Inbox에 저장한다. 같은 event ID·같은 본문 재전달은 기존 결과를 반환하고 다른 본문은 충돌로
+거부한다. 처리 임대와 시도 번호가 프로세스 중단 및 늦은 작업자 완료를 방지하며 결제·환불의 최종
+반영은 기존 대사 트랜잭션을 공유한다. 관리자는 운영 콘솔 또는
+`GET /api/admin/payment-webhooks`에서 상태·오류를 확인하고 `FAILED` 건을
+`POST /api/admin/payment-webhooks/{eventId}/retry`로 재처리한다.
 
 인증 사용자는 `GET /api/reservations`에서 상태·생성 기간별로 자신의 예약만 조회하고,
 `GET /api/reservations/{id}`에서 공연·회차·재고·수량과 요청 당시 가격 스냅샷을 확인한다.
@@ -215,6 +225,7 @@ bundle 생성을 실행한다. Gitleaks는 현재 파일만이 아니라 전체 
 - [ADR-0018: 결제 시도 원장과 결과 불명 대사](docs/adr/0018-payment-attempt-reconciliation.md)
 - [ADR-0019: 환불 시도 원장과 결과 불명 대사](docs/adr/0019-refund-attempt-reconciliation.md)
 - [ADR-0020: 결과 불명 자동 대사 임대와 백오프](docs/adr/0020-automatic-reconciliation.md)
+- [ADR-0021: 서명 검증 PG 웹훅 Inbox와 멱등 처리](docs/adr/0021-signed-payment-webhook-inbox.md)
 - [이벤트 목록 조회 기준선](docs/performance/event-list-baseline.md)
 - [관리자 조회 실행 계획](docs/performance/admin-query-plan.md)
 - [offset과 커서 페이지네이션 비교](docs/performance/reservation-pagination-comparison.md)
