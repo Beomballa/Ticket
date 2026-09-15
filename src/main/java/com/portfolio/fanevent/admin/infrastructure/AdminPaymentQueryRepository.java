@@ -32,7 +32,11 @@ public class AdminPaymentQueryRepository {
                         paymentAttempt.gatewayReference,
                         paymentAttempt.lastError,
                         paymentAttempt.requestedAt,
-                        paymentAttempt.resolvedAt))
+                        paymentAttempt.resolvedAt,
+                        paymentAttempt.reconciliationAttempts,
+                        paymentAttempt.nextReconciliationAt,
+                        paymentAttempt.reconciliationLeaseUntil,
+                        paymentAttempt.lastReconciliationAt))
                 .from(paymentAttempt)
                 .where(paymentAttempt.status.eq(PaymentAttemptStatus.UNKNOWN))
                 .orderBy(paymentAttempt.requestedAt.asc(), paymentAttempt.id.asc())

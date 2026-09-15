@@ -10,6 +10,8 @@ import type {
   MemberReservationSummary,
   OperationsSummary,
   OutboxEventSummary,
+  PaymentAttemptSummary,
+  RefundAttemptSummary,
   ReservationResult,
   ReservationStatus,
   ReservationSummary,
@@ -453,6 +455,12 @@ function AdminConsole({ member, onLogin }: { member: MemberProfile | null; onLog
   const [reservations, setReservations] = useState<ReservationSummary[]>([])
   const [inventory, setInventory] = useState<InventorySummary[]>([])
   const [outbox, setOutbox] = useState<OutboxEventSummary[]>([])
+  const [payments, setPayments] = useState<PaymentAttemptSummary[]>([])
+  const [refunds, setRefunds] = useState<RefundAttemptSummary[]>([])
+  const [paymentTotal, setPaymentTotal] = useState(0)
+  const [refundTotal, setRefundTotal] = useState(0)
+  const [reconciling, setReconciling] = useState('')
+  const [actionNotice, setActionNotice] = useState('')
   const [reservationStatus, setReservationStatus] = useState('')
   const [soldOut, setSoldOut] = useState('')
   const [loading, setLoading] = useState(false)
@@ -463,13 +471,18 @@ function AdminConsole({ member, onLogin }: { member: MemberProfile | null; onLog
     setLoading(true)
     setError('')
     try {
-      const [nextSummary, nextReservations, nextInventory, nextOutbox] = await Promise.all([
+      const [nextSummary, nextReservations, nextInventory, nextOutbox, nextPayments, nextRefunds] = await Promise.all([
         api.operationsSummary(), api.reservations(reservationStatus), api.inventory(soldOut), api.exhaustedOutbox(),
+        api.unknownPayments(), api.unknownRefunds(),
       ])
       setSummary(nextSummary)
       setReservations(nextReservations.content)
       setInventory(nextInventory.content)
       setOutbox(nextOutbox.content)
+      setPayments(nextPayments.content)
+      setRefunds(nextRefunds.content)
+      setPaymentTotal(nextPayments.totalElements)
+      setRefundTotal(nextRefunds.totalElements)
     } catch (requestError) {
       setError(describeError(requestError))
     } finally {
@@ -478,6 +491,25 @@ function AdminConsole({ member, onLogin }: { member: MemberProfile | null; onLog
   }, [member?.role, reservationStatus, soldOut])
 
   useEffect(() => { void load() }, [load])
+
+  const reconcile = async (type: 'payment' | 'refund', attemptId: string) => {
+    setReconciling(attemptId)
+    setError('')
+    setActionNotice('')
+    try {
+      const result = type === 'payment'
+        ? await api.reconcilePayment(attemptId)
+        : await api.reconcileRefund(attemptId)
+      setActionNotice(result.resolved
+        ? `대사가 완료되었습니다. 예약 상태: ${statusLabel[result.reservationStatus]}`
+        : 'PG 결과가 아직 확인되지 않아 자동 재시도를 유지합니다.')
+      await load()
+    } catch (requestError) {
+      setError(describeError(requestError))
+    } finally {
+      setReconciling('')
+    }
+  }
 
   if (!member) return <AccessState title="운영 데이터는 로그인이 필요합니다" action="로그인" onAction={onLogin} />
   if (member.role !== 'ADMIN') return <AccessState title="ADMIN 권한이 필요한 화면입니다" action="이벤트로 돌아가기" onAction={() => window.scrollTo({ top: 0 })} />
@@ -489,6 +521,7 @@ function AdminConsole({ member, onLogin }: { member: MemberProfile | null; onLog
         <button className="button dark" disabled={loading} onClick={() => void load()}>새로고침</button>
       </div>
       {error && <ErrorPanel message={error} retry={load} />}
+      {actionNotice && <div className="action-notice" role="status">{actionNotice}</div>}
       <div className="metric-grid">
         <Metric label="전체 예약" value={summary?.totalReservations ?? 0} />
         <Metric label="확정 매출" value={formatCurrency(summary?.confirmedSalesAmount ?? 0)} />
@@ -525,6 +558,79 @@ function AdminConsole({ member, onLogin }: { member: MemberProfile | null; onLog
           </tbody></table></div>
         )}
       </section>
+
+      <div className="reconciliation-grid">
+        <ReconciliationTable
+          title="결제 결과 불명"
+          description="자동 대사 대상과 다음 재시도 시각"
+          total={paymentTotal}
+          loading={loading}
+          rows={payments.map((item) => ({
+            id: item.paymentAttemptId,
+            reservationId: item.reservationId,
+            amount: item.amount,
+            attempts: item.reconciliationAttempts,
+            requestedAt: item.requestedAt,
+            nextAt: item.nextReconciliationAt,
+            leased: Boolean(item.reconciliationLeaseUntil),
+            error: item.lastError,
+          }))}
+          reconciling={reconciling}
+          onReconcile={(id) => reconcile('payment', id)}
+        />
+        <ReconciliationTable
+          title="환불 결과 불명"
+          description="환불 성공 확인 전 재고를 계속 선점합니다."
+          total={refundTotal}
+          loading={loading}
+          rows={refunds.map((item) => ({
+            id: item.refundAttemptId,
+            reservationId: item.reservationId,
+            amount: item.amount,
+            attempts: item.reconciliationAttempts,
+            requestedAt: item.requestedAt,
+            nextAt: item.nextReconciliationAt,
+            leased: Boolean(item.reconciliationLeaseUntil),
+            error: item.lastError,
+          }))}
+          reconciling={reconciling}
+          onReconcile={(id) => reconcile('refund', id)}
+        />
+      </div>
+    </section>
+  )
+}
+
+interface ReconciliationRow {
+  id: string
+  reservationId: number
+  amount: number
+  attempts: number
+  requestedAt: string
+  nextAt: string | null
+  leased: boolean
+  error: string | null
+}
+
+function ReconciliationTable({
+  title, description, total, loading, rows, reconciling, onReconcile,
+}: {
+  title: string
+  description: string
+  total: number
+  loading: boolean
+  rows: ReconciliationRow[]
+  reconciling: string
+  onReconcile: (id: string) => Promise<void>
+}) {
+  return (
+    <section className="table-card">
+      <div className="table-heading"><div><h2>{title}</h2><p>{description}</p></div><span className="status unknown">{total}건</span></div>
+      {loading ? <InlineLoading /> : rows.length === 0 ? <EmptyState title="대사 대상이 없습니다" description="모든 PG 결과가 확정된 상태입니다." /> : (
+        <div className="table-scroll"><table><thead><tr><th>예약</th><th>금액</th><th>발생</th><th>자동 시도</th><th>다음 실행</th><th>상태</th><th /></tr></thead><tbody>
+          {rows.map((item) => <tr key={item.id} title={item.error ?? undefined}><td>#{item.reservationId}</td><td>{formatCurrency(item.amount)}</td><td>{formatDateTime(item.requestedAt)}</td><td>{item.attempts}회</td><td>{item.nextAt ? formatDateTime(item.nextAt) : '대기'}</td><td><span className={`status ${item.leased ? 'processing' : 'unknown'}`}>{item.leased ? '처리 중' : '대기'}</span></td><td><button className="button ghost small" disabled={reconciling === item.id} onClick={() => void onReconcile(item.id)}>{reconciling === item.id ? '확인 중…' : '지금 대사'}</button></td></tr>)}
+        </tbody></table></div>
+      )}
     </section>
   )
 }

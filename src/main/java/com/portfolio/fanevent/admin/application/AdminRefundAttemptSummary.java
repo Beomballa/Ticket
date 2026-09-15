@@ -14,6 +14,10 @@ public record AdminRefundAttemptSummary(
         String gatewayRefundReference,
         String lastError,
         Instant requestedAt,
-        Instant resolvedAt
+        Instant resolvedAt,
+        int reconciliationAttempts,
+        Instant nextReconciliationAt,
+        Instant reconciliationLeaseUntil,
+        Instant lastReconciliationAt
 ) {
 }

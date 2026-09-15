@@ -8,7 +8,10 @@ import type {
   MemberProfile,
   OperationsSummary,
   OutboxEventSummary,
+  PaymentAttemptSummary,
   Page,
+  ReconcileResult,
+  RefundAttemptSummary,
   ReservationResult,
   ReservationSummary,
 } from './types'
@@ -113,6 +116,20 @@ export const api = {
   ),
   retryOutbox: (eventId: string) => request<{ eventId: string; status: string; previousAttempts: number }>(
     `/api/admin/outbox-events/${eventId}/retry`,
+    { method: 'POST' },
+  ),
+  unknownPayments: () => request<Page<PaymentAttemptSummary>>(
+    '/api/admin/payment-attempts/unknown?page=0&size=12',
+  ),
+  reconcilePayment: (paymentAttemptId: string) => request<ReconcileResult>(
+    `/api/admin/payment-attempts/${paymentAttemptId}/reconcile`,
+    { method: 'POST' },
+  ),
+  unknownRefunds: () => request<Page<RefundAttemptSummary>>(
+    '/api/admin/refund-attempts/unknown?page=0&size=12',
+  ),
+  reconcileRefund: (refundAttemptId: string) => request<ReconcileResult>(
+    `/api/admin/refund-attempts/${refundAttemptId}/reconcile`,
     { method: 'POST' },
   ),
 }

@@ -33,7 +33,11 @@ public class AdminRefundQueryRepository {
                         refundAttempt.gatewayRefundReference,
                         refundAttempt.lastError,
                         refundAttempt.requestedAt,
-                        refundAttempt.resolvedAt))
+                        refundAttempt.resolvedAt,
+                        refundAttempt.reconciliationAttempts,
+                        refundAttempt.nextReconciliationAt,
+                        refundAttempt.reconciliationLeaseUntil,
+                        refundAttempt.lastReconciliationAt))
                 .from(refundAttempt)
                 .where(refundAttempt.status.eq(RefundAttemptStatus.UNKNOWN))
                 .orderBy(refundAttempt.requestedAt.asc(), refundAttempt.id.asc())

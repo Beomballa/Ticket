@@ -963,7 +963,9 @@ class FanEventPlatformApplicationTests {
 		mockMvc.perform(get("/api/admin/payment-attempts/unknown"))
 				.andExpect(status().isOk())
 				.andExpect(jsonPath("$.content[0].paymentAttemptId").value(attemptId.toString()))
-				.andExpect(jsonPath("$.content[0].status").value("UNKNOWN"));
+				.andExpect(jsonPath("$.content[0].status").value("UNKNOWN"))
+				.andExpect(jsonPath("$.content[0].reconciliationAttempts").value(0))
+				.andExpect(jsonPath("$.content[0].nextReconciliationAt").isNotEmpty());
 
 		for (int reconciliation = 0; reconciliation < 2; reconciliation++) {
 			mockMvc.perform(post(
@@ -1301,7 +1303,9 @@ class FanEventPlatformApplicationTests {
 		mockMvc.perform(get("/api/admin/refund-attempts/unknown"))
 				.andExpect(status().isOk())
 				.andExpect(jsonPath("$.content[0].refundAttemptId").value(attemptId.toString()))
-				.andExpect(jsonPath("$.content[0].status").value("UNKNOWN"));
+				.andExpect(jsonPath("$.content[0].status").value("UNKNOWN"))
+				.andExpect(jsonPath("$.content[0].reconciliationAttempts").value(0))
+				.andExpect(jsonPath("$.content[0].nextReconciliationAt").isNotEmpty());
 		assertThat(sessionFactory.getStatistics().getPrepareStatementCount()).isEqualTo(2);
 
 		for (int reconciliation = 0; reconciliation < 2; reconciliation++) {

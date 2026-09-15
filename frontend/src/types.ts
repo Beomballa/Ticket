@@ -152,3 +152,39 @@ export interface OutboxEventSummary {
   lastError: string | null
   createdAt: string
 }
+
+export interface PaymentAttemptSummary {
+  paymentAttemptId: string
+  reservationId: number
+  amount: number
+  status: 'UNKNOWN'
+  gatewayReference: string | null
+  lastError: string | null
+  requestedAt: string
+  resolvedAt: string | null
+  reconciliationAttempts: number
+  nextReconciliationAt: string | null
+  reconciliationLeaseUntil: string | null
+  lastReconciliationAt: string | null
+}
+
+export interface RefundAttemptSummary {
+  refundAttemptId: string
+  reservationId: number
+  paymentAttemptId: string
+  amount: number
+  status: 'UNKNOWN'
+  gatewayRefundReference: string | null
+  lastError: string | null
+  requestedAt: string
+  resolvedAt: string | null
+  reconciliationAttempts: number
+  nextReconciliationAt: string | null
+  reconciliationLeaseUntil: string | null
+  lastReconciliationAt: string | null
+}
+
+export interface ReconcileResult {
+  reservationStatus: ReservationStatus
+  resolved: boolean
+}
