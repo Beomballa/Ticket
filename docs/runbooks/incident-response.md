@@ -189,13 +189,15 @@ Authorization: Bearer <admin-token>
 - `fan_event_refund_reconciliation_total{result="unknown"}` 증가
 - `fan_event_refund_reconciliation_backlog`과 `fan_event_refund_reconciliation_oldest_age_seconds` 증가
 - 관리자 환불 결과 불명 목록에 오래된 시도가 누적
+- `fan_event_refund_execution_claim_total{result="recovered_unknown"}` 급증
 
 ### 즉시 대응
 
 1. 오류 응답의 `traceId`와 `refundAttemptId`로 환불 요청 로그를 확인한다.
-2. 관리자 API에서 예약 ID, 원 결제 시도 ID, 금액과 요청 시각을 확인한다.
-3. `fan_event_reconciliation_automatic_total{type="refund"}`의 `resolved`, `pending`, `failed` 추이와 PG 환불 조회 API 상태를 확인한다.
-4. 자동 대사 임대가 30초 뒤 회수되고 재시도 간격이 최대 10분 안에서 증가하는지 확인한다. 긴급 건은 단건 대사를 실행한다.
+2. `in_progress`가 짧게 증가하는 것은 정상 중복 취소일 수 있다. `recovered_unknown`이 증가하면 처리 유예시간보다 오래 실행된 PG 환불, 프로세스 중단 또는 결과 기록 실패를 먼저 확인한다.
+3. 관리자 API에서 예약 ID, 원 결제 시도 ID, 금액과 요청 시각을 확인한다.
+4. `fan_event_reconciliation_automatic_total{type="refund"}`의 `resolved`, `pending`, `failed` 추이와 PG 환불 조회 API 상태를 확인한다.
+5. 자동 대사 임대가 30초 뒤 회수되고 재시도 간격이 최대 10분 안에서 증가하는지 확인한다. 긴급 건은 단건 대사를 실행한다.
 
 ```http
 GET /api/admin/refund-attempts/unknown?page=0&size=20
@@ -205,8 +207,8 @@ POST /api/admin/refund-attempts/{refundAttemptId}/reconcile
 Authorization: Bearer <admin-token>
 ```
 
-5. `resolved=false`이면 PG 결과가 아직 없으므로 `UNKNOWN`을 유지한다. 새 키로 환불을 다시 호출하거나 DB에서 예약을 직접 취소하지 않는다.
-6. 거절로 확인되면 예약 `CONFIRMED`와 선점 재고를 유지하고 고객 안내 또는 PG 거절 원인 해소 절차로 전환한다.
+6. `resolved=false`이면 PG 결과가 아직 없으므로 `UNKNOWN`을 유지한다. 새 키로 환불을 다시 호출하거나 DB에서 예약을 직접 취소하지 않는다.
+7. 거절로 확인되면 예약 `CONFIRMED`와 선점 재고를 유지하고 고객 안내 또는 PG 거절 원인 해소 절차로 전환한다.
 
 ### 복구 판정
 

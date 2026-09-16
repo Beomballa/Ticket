@@ -101,6 +101,15 @@ groups:
           summary: 환불 결과 불명 건이 5분 넘게 해소되지 않고 있습니다.
           runbook: docs/runbooks/incident-response.md
 
+      - alert: FanEventRefundExecutionRecoverySpike
+        expr: sum(increase(fan_event_refund_execution_claim_total{result="recovered_unknown"}[5m])) > 5
+        for: 2m
+        labels:
+          severity: warning
+        annotations:
+          summary: 처리 유예시간이 지난 환불 요청의 복구가 급증했습니다.
+          runbook: docs/runbooks/incident-response.md
+
       - alert: FanEventLatePaymentCompensationStale
         expr: fan_event_payment_compensation_oldest_age_seconds > 300
         for: 5m

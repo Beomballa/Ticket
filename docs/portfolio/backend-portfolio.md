@@ -34,6 +34,7 @@ flowchart LR
 | PG 승인 응답 유실 | 결제 시도 원장·PG 멱등키·UNKNOWN 대사 | 승인 호출 1회, 관리자 대사 후 예약·Outbox 1회 확정 |
 | 동시 결제 확정의 원장 생성 경쟁 | 원자 INSERT·예약별 미해결 원장 유일성·처리 유예시간 | 동일·상이 키 동시 요청에서 원장 1건, PG 승인과 Outbox 1회 |
 | PG 환불 응답 유실 | 환불 시도 원장·예약별 PG 멱등키·UNKNOWN 대사 | 결과 확인 전 재고 유지, 성공 대사 후 취소·재고 반환 1회 |
+| 동시 환불 취소와 연결 풀 중첩 점유 | 순차 트랜잭션 경계·원자 원장 claim·예약 행 잠금 | PG 호출 중 DB 트랜잭션 0, 원장·환불·재고 반환·Outbox 각 1회 |
 | 결과 불명 원장의 장기 고착 | 만료 임대·`SKIP LOCKED` 자동 대사·지수 백오프 | 동시 작업자 단일 선점, 임대 회수, 체류 시간 경보 통합 테스트 |
 | PG 웹훅 위조·중복·처리 유실 | HMAC 검증·PostgreSQL Inbox·event ID/payload hash 멱등성 | 위조·시차·중복·충돌·임대 회수·실패 재처리 통합 테스트 |
 | 예약 만료 뒤 늦은 결제 승인 | 결제 확정과 보상 환불 생성 원자화·고정 PG 멱등키 Saga | 예약 EXPIRED·재고 반환 유지, 복수 작업자 환불 1건과 응답 유실 복구 테스트 |
@@ -43,7 +44,7 @@ flowchart LR
 | 사용자 예약 정보 노출 | JWT 소유권 범위 + QueryDSL 읽기 모델 | 목록·상세 각 SQL 2회, 타인 예약 동일 404 |
 | 깊은 페이지의 offset 비용 | `(created_at, id)` row-value cursor | 50,000건 49,001번째 기준 p50 3.067ms → 0.213ms |
 | Redis 장애 전파 | Cache-Aside fallback, rate-limit fail-open | Redis 예외 시 DB 원본 기능 유지 테스트 |
-| 장애 추적 단절 | X-Request-Id, MDC, 도메인 메트릭 | Prometheus endpoint와 Grafana 9개 패널 검증 |
+| 장애 추적 단절 | X-Request-Id, MDC, 도메인 메트릭 | Prometheus endpoint와 Grafana 10개 패널 검증 |
 | 구현과 API 문서의 표류 | 컨트롤러 기반 OpenAPI와 대상별 계약 그룹 | 공개·회원·관리자 경로와 JWT 요구 사항 회귀 테스트 |
 | 운영 용량·정합성 회귀 | Docker k6 + 종료 후 SQL invariant | 상세 p95 11.17ms, 경합 p95 133.77ms, 초과 판매·Hikari timeout 0 |
 
@@ -51,7 +52,7 @@ flowchart LR
 
 - PostgreSQL 조건부 UPDATE와 `FOR UPDATE SKIP LOCKED`를 적용해 고경합 한정 재고의 초과 판매를 방지하고, 예약 만료를 다중 인스턴스에서 안전하게 병렬 처리했습니다.
 - JPA 쓰기 모델과 QueryDSL 읽기 모델을 분리하고 50,000건 데이터로 cursor pagination을 측정해 깊은 페이지 p50을 3.067ms에서 0.213ms로 개선했습니다.
-- 멱등키, 원자 결제 원장 claim, 서명 PG 웹훅 Inbox, 결과 불명 자동 대사와 늦은 승인 보상 환불 Saga를 구축하고 Testcontainers로 동시 요청·임대 회수·백오프·응답 유실 시나리오를 검증했습니다.
+- 멱등키, 원자 결제·환불 원장 claim, 서명 PG 웹훅 Inbox, 결과 불명 자동 대사와 늦은 승인 보상 환불 Saga를 구축하고 Testcontainers로 동시 요청·임대 회수·백오프·응답 유실 시나리오를 검증했습니다.
 
 ## 면접용 STAR 이야기
 

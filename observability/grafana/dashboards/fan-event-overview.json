@@ -79,6 +79,15 @@
         {"expr": "sum(rate(fan_event_payment_authorization_claim_total[5m])) by (result)", "legendFormat": "{{result}}"}
       ],
       "gridPos": {"x": 0, "y": 40, "w": 24, "h": 8}
+    },
+    {
+      "id": 10,
+      "type": "timeseries",
+      "title": "Refund execution claims",
+      "targets": [
+        {"expr": "sum(rate(fan_event_refund_execution_claim_total[5m])) by (result)", "legendFormat": "{{result}}"}
+      ],
+      "gridPos": {"x": 0, "y": 48, "w": 24, "h": 8}
     }
   ]
 }

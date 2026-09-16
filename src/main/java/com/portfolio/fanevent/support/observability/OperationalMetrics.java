@@ -79,6 +79,10 @@ public class OperationalMetrics {
         increment("fan.event.refund.reconciliation", "result", result);
     }
 
+    public void refundExecutionClaim(String result) {
+        increment("fan.event.refund.execution.claim", "result", result);
+    }
+
     public void automaticReconciliation(String type, String result) {
         increment("fan.event.reconciliation.automatic", "type", type, "result", result);
     }

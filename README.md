@@ -109,7 +109,13 @@ API에는 `409 PAYMENT_RESULT_UNKNOWN`을 반환한다. 관리자는
 예약 확정·Outbox·감사 로그와 함께 반영되며 같은 대사 요청을 반복해도 부작용은 한 번만 발생한다.
 
 확정 예약의 취소 전에 승인 결제를 참조하는 `refund_attempts` 원장과 예약별 고정 PG 멱등키를
-저장한다. `mock-refund-declined`, `mock-refund-timeout-succeeded`,
+저장한다. 취소는 준비·환불·완료의 짧은 트랜잭션 경계로 나눠 PG 응답 중 DB 연결을 점유하지
+않는다. 원장 생성은 PostgreSQL `ON CONFLICT DO NOTHING`으로 원자화했으며, 같은 예약의 동시
+취소 중 최초 요청만 PG를 호출한다. 30초 처리 유예시간 안의 중복은
+`409 IDEMPOTENCY_REQUEST_IN_PROGRESS`를 반환하고, 유예시간이 지난 `REQUESTED`만
+`UNKNOWN`으로 바꿔 자동 대사로 넘긴다. 유예시간은
+`app.payment.refund.processing-timeout`에서 조정한다. `mock-refund-declined`,
+`mock-refund-timeout-succeeded`,
 `mock-refund-timeout-declined` 결제 토큰으로 환불 거절과 응답 유실을 재현할 수 있다. 결과 불명은
 `409 REFUND_RESULT_UNKNOWN`을 반환하며 예약과 재고를 유지한다. 관리자는
 `GET /api/admin/refund-attempts/unknown`과
@@ -255,6 +261,7 @@ bundle 생성을 실행한다. Gitleaks는 현재 파일만이 아니라 전체 
 - [ADR-0024: 영속 대기열 정책과 Redis 런타임 복구](docs/adr/0024-persistent-waiting-room-policy.md)
 - [ADR-0025: 결제 확정의 순차 트랜잭션 경계](docs/adr/0025-payment-confirmation-connection-boundary.md)
 - [ADR-0026: 동시 결제 확정의 원자 원장 생성과 처리 유예시간](docs/adr/0026-payment-attempt-inflight-claim.md)
+- [ADR-0027: 환불 취소의 순차 트랜잭션 경계와 원자 원장 claim](docs/adr/0027-refund-cancellation-transaction-boundary.md)
 - [이벤트 목록 조회 기준선](docs/performance/event-list-baseline.md)
 - [관리자 조회 실행 계획](docs/performance/admin-query-plan.md)
 - [offset과 커서 페이지네이션 비교](docs/performance/reservation-pagination-comparison.md)

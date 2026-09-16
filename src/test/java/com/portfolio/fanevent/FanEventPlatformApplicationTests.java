@@ -33,6 +33,7 @@ import com.portfolio.fanevent.outbox.application.OutboxPublisher;
 import com.portfolio.fanevent.outbox.infrastructure.ReservationAuditOutboxHandler;
 import com.portfolio.fanevent.payment.application.PaymentGateway;
 import com.portfolio.fanevent.payment.application.PaymentAttemptService;
+import com.portfolio.fanevent.payment.application.RefundAttemptService;
 import com.portfolio.fanevent.payment.application.AutomaticReconciliationService;
 import com.portfolio.fanevent.payment.application.ReconciliationCandidate;
 import com.portfolio.fanevent.payment.infrastructure.ReconciliationLeaseRepository;
@@ -180,6 +181,9 @@ class FanEventPlatformApplicationTests {
 
 	@Autowired
 	private PaymentAttemptService paymentAttemptService;
+
+	@Autowired
+	private RefundAttemptService refundAttemptService;
 
 	@Autowired
 	private WaitingRoomService waitingRoomService;
@@ -1837,6 +1841,192 @@ class FanEventPlatformApplicationTests {
 	}
 
 	@Test
+	void refundGatewayRunsWithoutHoldingDatabaseTransaction() throws Exception {
+		String accessToken = login(signupUniqueMember("환불 트랜잭션 경계 회원"), "secure-password");
+		Long inventoryId = createOnSaleInventory(2, new BigDecimal("25100.00"));
+		Long reservationId = holdReservation(accessToken, inventoryId, 1);
+		confirmReservation(accessToken, reservationId, "mock-approved");
+		AtomicBoolean transactionActiveAtGateway = new AtomicBoolean(true);
+
+		doAnswer(invocation -> {
+			transactionActiveAtGateway.set(
+					TransactionSynchronizationManager.isActualTransactionActive());
+			return invocation.callRealMethod();
+		}).when(paymentGateway).refund(
+				eq(reservationId),
+				eq(new BigDecimal("25100.00")),
+				eq("mock-payment-" + reservationId),
+				eq("reservation-refund-" + reservationId));
+
+		mockMvc.perform(post("/api/reservations/{reservationId}/cancel", reservationId)
+				.header("Authorization", "Bearer " + accessToken))
+				.andExpect(status().isOk())
+				.andExpect(jsonPath("$.status").value("CANCELLED"));
+
+		assertThat(transactionActiveAtGateway).isFalse();
+	}
+
+	@Test
+	void concurrentRefundAttemptCreationIsAtomicAndKeepsFreshRequestInProgress() throws Exception {
+		String accessToken = login(signupUniqueMember("환불 원장 경쟁 회원"), "secure-password");
+		Long inventoryId = createOnSaleInventory(2, new BigDecimal("25200.00"));
+		Long reservationId = holdReservation(accessToken, inventoryId, 1);
+		confirmReservation(accessToken, reservationId, "mock-approved");
+		int workers = 6;
+		ExecutorService executor = Executors.newFixedThreadPool(workers);
+		CountDownLatch start = new CountDownLatch(1);
+		List<Future<Boolean>> attempts = new ArrayList<>();
+
+		try {
+			for (int worker = 0; worker < workers; worker++) {
+				attempts.add(executor.submit(() -> {
+					start.await();
+					try {
+						refundAttemptService.begin(reservationId, new BigDecimal("25200.00"));
+						return true;
+					} catch (IdempotencyInProgressException exception) {
+						return false;
+					}
+				}));
+			}
+			start.countDown();
+			int owners = 0;
+			for (Future<Boolean> attempt : attempts) {
+				if (attempt.get(10, TimeUnit.SECONDS)) owners++;
+			}
+			assertThat(owners).isEqualTo(1);
+		} finally {
+			executor.shutdownNow();
+		}
+
+		assertThat(jdbcTemplate.queryForObject("""
+				SELECT count(*) FROM refund_attempts WHERE reservation_id = ?
+				""", Integer.class, reservationId)).isEqualTo(1);
+		assertThat(jdbcTemplate.queryForObject("""
+				SELECT status FROM refund_attempts WHERE reservation_id = ?
+				""", String.class, reservationId)).isEqualTo("REQUESTED");
+		mockMvc.perform(get("/actuator/prometheus"))
+				.andExpect(status().isOk())
+				.andExpect(content().string(containsString(
+						"fan_event_refund_execution_claim_total")))
+				.andExpect(content().string(containsString("result=\"in_progress\"")));
+		jdbcTemplate.update("DELETE FROM refund_attempts WHERE reservation_id = ?", reservationId);
+	}
+
+	@Test
+	void staleRequestedRefundAttemptBecomesUnknownForReconciliation() throws Exception {
+		String accessToken = login(signupUniqueMember("환불 원장 복구 회원"), "secure-password");
+		Long inventoryId = createOnSaleInventory(2, new BigDecimal("25300.00"));
+		Long reservationId = holdReservation(accessToken, inventoryId, 1);
+		confirmReservation(accessToken, reservationId, "mock-approved");
+
+		refundAttemptService.begin(reservationId, new BigDecimal("25300.00"));
+		jdbcTemplate.update("""
+				UPDATE refund_attempts
+				SET requested_at = ?, updated_at = ?
+				WHERE reservation_id = ?
+				""",
+				java.sql.Timestamp.from(Instant.now().minus(31, ChronoUnit.SECONDS)),
+				java.sql.Timestamp.from(Instant.now().minus(31, ChronoUnit.SECONDS)),
+				reservationId);
+
+		assertThat(refundAttemptService.begin(
+				reservationId, new BigDecimal("25300.00")).getStatus().name())
+				.isEqualTo("UNKNOWN");
+		Map<String, Object> recovered = jdbcTemplate.queryForMap("""
+				SELECT status, next_reconciliation_at
+				FROM refund_attempts WHERE reservation_id = ?
+				""", reservationId);
+		assertThat(recovered.get("status")).isEqualTo("UNKNOWN");
+		assertThat(recovered.get("next_reconciliation_at")).isNotNull();
+		jdbcTemplate.update("DELETE FROM refund_attempts WHERE reservation_id = ?", reservationId);
+	}
+
+	@Test
+	void concurrentCancellationReturnsInProgressWithoutDuplicatingRefund() throws Exception {
+		String accessToken = login(signupUniqueMember("동시 환불 취소 회원"), "secure-password");
+		Long inventoryId = createOnSaleInventory(2, new BigDecimal("25400.00"));
+		Long reservationId = holdReservation(accessToken, inventoryId, 1);
+		confirmReservation(accessToken, reservationId, "mock-approved");
+		CountDownLatch gatewayEntered = new CountDownLatch(1);
+		CountDownLatch releaseGateway = new CountDownLatch(1);
+
+		doAnswer(invocation -> {
+			gatewayEntered.countDown();
+			if (!releaseGateway.await(10, TimeUnit.SECONDS)) {
+				throw new IllegalStateException("동시 환불 테스트의 PG 대기가 시간 안에 해제되지 않았습니다.");
+			}
+			return invocation.callRealMethod();
+		}).when(paymentGateway).refund(
+				eq(reservationId),
+				eq(new BigDecimal("25400.00")),
+				eq("mock-payment-" + reservationId),
+				eq("reservation-refund-" + reservationId));
+
+		ExecutorService executor = Executors.newSingleThreadExecutor();
+		try {
+			Future<String> first = executor.submit(() -> mockMvc.perform(
+					post("/api/reservations/{reservationId}/cancel", reservationId)
+							.header("Authorization", "Bearer " + accessToken))
+					.andExpect(status().isOk())
+					.andReturn().getResponse().getContentAsString());
+			assertThat(gatewayEntered.await(10, TimeUnit.SECONDS)).isTrue();
+
+			mockMvc.perform(post("/api/reservations/{reservationId}/cancel", reservationId)
+					.header("Authorization", "Bearer " + accessToken))
+					.andExpect(status().isConflict())
+					.andExpect(jsonPath("$.code").value("IDEMPOTENCY_REQUEST_IN_PROGRESS"));
+			releaseGateway.countDown();
+			assertThat(objectMapper.readTree(first.get(10, TimeUnit.SECONDS)).get("status").asText())
+					.isEqualTo("CANCELLED");
+		} finally {
+			releaseGateway.countDown();
+			executor.shutdownNow();
+		}
+
+		verify(paymentGateway, times(1)).refund(
+				eq(reservationId),
+				eq(new BigDecimal("25400.00")),
+				eq("mock-payment-" + reservationId),
+				eq("reservation-refund-" + reservationId));
+		assertThat(reservationStatus(reservationId)).isEqualTo("CANCELLED");
+		assertThat(inventoryQuantity(inventoryId)).isEqualTo(2);
+		assertThat(outboxCount(reservationId, "RESERVATION_CANCELLED")).isEqualTo(1);
+		assertThat(jdbcTemplate.queryForObject("""
+				SELECT count(*) FROM refund_attempts WHERE reservation_id = ?
+				""", Integer.class, reservationId)).isEqualTo(1);
+	}
+
+	@Test
+	void concurrentCancellationFinalizationReturnsInventoryAndOutboxOnce() throws Exception {
+		String accessToken = login(signupUniqueMember("동시 취소 완료 회원"), "secure-password");
+		Long inventoryId = createOnSaleInventory(2, new BigDecimal("25500.00"));
+		Long reservationId = holdReservation(accessToken, inventoryId, 1);
+		confirmReservation(accessToken, reservationId, "mock-approved");
+		var refundAttempt = refundAttemptService.begin(reservationId, new BigDecimal("25500.00"));
+		refundAttemptService.succeed(refundAttempt.getId(), "prepared-refund-reference");
+		CountDownLatch start = new CountDownLatch(1);
+		ExecutorService executor = Executors.newFixedThreadPool(2);
+
+		try {
+			Future<String> first = executor.submit(() -> cancelReservationAfter(
+					start, accessToken, reservationId));
+			Future<String> second = executor.submit(() -> cancelReservationAfter(
+					start, accessToken, reservationId));
+			start.countDown();
+			assertThat(List.of(first.get(10, TimeUnit.SECONDS), second.get(10, TimeUnit.SECONDS)))
+					.containsOnly("CANCELLED");
+		} finally {
+			executor.shutdownNow();
+		}
+
+		verify(paymentGateway, never()).refund(
+				eq(reservationId), any(BigDecimal.class), anyString(), anyString());
+		assertThat(inventoryQuantity(inventoryId)).isEqualTo(2);
+		assertThat(outboxCount(reservationId, "RESERVATION_CANCELLED")).isEqualTo(1);
+	}
+
+	@Test
 	void declinedRefundKeepsConfirmedReservationAndHeldInventory() throws Exception {
 		String accessToken = login(signupUniqueMember("환불 거절 회원"), "secure-password");
 		Long inventoryId = createOnSaleInventory(3, new BigDecimal("26000.00"));
@@ -2885,6 +3075,19 @@ class FanEventPlatformApplicationTests {
 				FROM reservation_items
 				WHERE inventory_id = ?
 				""", Integer.class, inventoryId);
+	}
+
+	private String cancelReservationAfter(
+			CountDownLatch start,
+			String accessToken,
+			Long reservationId
+	) throws Exception {
+		start.await();
+		String body = mockMvc.perform(post("/api/reservations/{reservationId}/cancel", reservationId)
+				.header("Authorization", "Bearer " + accessToken))
+				.andExpect(status().isOk())
+				.andReturn().getResponse().getContentAsString();
+		return objectMapper.readTree(body).get("status").asText();
 	}
 
 	private void cancelTwice(String accessToken, Long reservationId) throws Exception {

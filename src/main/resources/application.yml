@@ -80,6 +80,8 @@ app:
   payment:
     authorization:
       processing-timeout: PT30S
+    refund:
+      processing-timeout: PT30S
     webhook:
       secret: ${PG_WEBHOOK_SECRET:local-webhook-signing-key}
       timestamp-tolerance: PT5M

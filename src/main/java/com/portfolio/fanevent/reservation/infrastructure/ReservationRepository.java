@@ -47,6 +47,18 @@ public interface ReservationRepository extends JpaRepository<Reservation, Long> 
             @Param("memberId") Long memberId
     );
 
+    @Query(value = """
+            SELECT id
+            FROM reservations
+            WHERE id = :reservationId
+              AND member_id = :memberId
+            FOR UPDATE
+            """, nativeQuery = true)
+    Optional<Long> lockOwnedById(
+            @Param("reservationId") Long reservationId,
+            @Param("memberId") Long memberId
+    );
+
     @Query("""
             select distinct reservation
             from Reservation reservation

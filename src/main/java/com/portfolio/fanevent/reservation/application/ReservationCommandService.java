@@ -9,14 +9,6 @@ import com.portfolio.fanevent.idempotency.application.RequestFingerprint;
 import com.portfolio.fanevent.member.domain.Member;
 import com.portfolio.fanevent.member.infrastructure.MemberRepository;
 import com.portfolio.fanevent.outbox.application.OutboxEventWriter;
-import com.portfolio.fanevent.payment.application.PaymentGateway;
-import com.portfolio.fanevent.payment.application.RefundAttemptService;
-import com.portfolio.fanevent.payment.application.RefundDeclinedException;
-import com.portfolio.fanevent.payment.application.RefundGatewayTimeoutException;
-import com.portfolio.fanevent.payment.application.RefundResult;
-import com.portfolio.fanevent.payment.application.RefundResultUnknownException;
-import com.portfolio.fanevent.payment.domain.RefundAttempt;
-import com.portfolio.fanevent.payment.domain.RefundAttemptStatus;
 import com.portfolio.fanevent.reservation.domain.Reservation;
 import com.portfolio.fanevent.reservation.infrastructure.ReservationRepository;
 import com.portfolio.fanevent.waitingroom.AdmissionTokenService;
@@ -45,14 +37,12 @@ public class ReservationCommandService {
     private final ReservationRepository reservationRepository;
     private final ReservationProperties properties;
     private final Clock clock;
-    private final PaymentGateway paymentGateway;
     private final ReservationConfirmationService confirmationService;
-    private final RefundAttemptService refundAttemptService;
+    private final ReservationCancellationService cancellationService;
     private final IdempotencyService idempotencyService;
     private final RequestFingerprint requestFingerprint;
     private final OutboxEventWriter outboxEventWriter;
     private final PublicEventCacheInvalidator cacheInvalidator;
-    private final ReservationCancellationFinalizer cancellationFinalizer;
     private final WaitingRoomService waitingRoomService;
 
     public ReservationCommandService(
@@ -61,14 +51,12 @@ public class ReservationCommandService {
             ReservationRepository reservationRepository,
             ReservationProperties properties,
             Clock clock,
-            PaymentGateway paymentGateway,
             ReservationConfirmationService confirmationService,
-            RefundAttemptService refundAttemptService,
+            ReservationCancellationService cancellationService,
             IdempotencyService idempotencyService,
             RequestFingerprint requestFingerprint,
             OutboxEventWriter outboxEventWriter,
             PublicEventCacheInvalidator cacheInvalidator,
-            ReservationCancellationFinalizer cancellationFinalizer,
             WaitingRoomService waitingRoomService
     ) {
         this.memberRepository = memberRepository;
@@ -76,14 +64,12 @@ public class ReservationCommandService {
         this.reservationRepository = reservationRepository;
         this.properties = properties;
         this.clock = clock;
-        this.paymentGateway = paymentGateway;
         this.confirmationService = confirmationService;
-        this.refundAttemptService = refundAttemptService;
+        this.cancellationService = cancellationService;
         this.idempotencyService = idempotencyService;
         this.requestFingerprint = requestFingerprint;
         this.outboxEventWriter = outboxEventWriter;
         this.cacheInvalidator = cacheInvalidator;
-        this.cancellationFinalizer = cancellationFinalizer;
         this.waitingRoomService = waitingRoomService;
     }
 
@@ -152,58 +138,8 @@ public class ReservationCommandService {
                 memberId, reservationId, paymentToken, idempotencyKey);
     }
 
-    @Transactional
     public ReservationResult cancel(Long memberId, Long reservationId) {
-        Reservation reservation = findOwnedReservation(memberId, reservationId);
-        reservation.requireCancellable();
-        if (reservation.isCancelled()) {
-            return ReservationResult.from(reservation);
-        }
-
-        if (reservation.isConfirmed()) {
-            RefundAttempt attempt = refundAttemptService.begin(
-                    reservation.getId(), reservation.getTotalAmount());
-            refundPayment(reservation, attempt);
-        }
-        Instant now = clock.instant();
-        cancellationFinalizer.complete(reservation, now);
-        reservationRepository.flush();
-        log.info("reservation cancelled: reservationId={}, memberId={}", reservationId, memberId);
-        return ReservationResult.from(reservation);
-    }
-
-    private void refundPayment(Reservation reservation, RefundAttempt attempt) {
-        if (attempt.getStatus() == RefundAttemptStatus.SUCCEEDED) {
-            return;
-        }
-        if (attempt.getStatus() == RefundAttemptStatus.DECLINED) {
-            throw new RefundDeclinedException();
-        }
-        if (attempt.getStatus() == RefundAttemptStatus.UNKNOWN) {
-            throw new RefundResultUnknownException(attempt.getId());
-        }
-
-        try {
-            RefundResult result = paymentGateway.refund(
-                    reservation.getId(),
-                    reservation.getTotalAmount(),
-                    attempt.getGatewayPaymentReference(),
-                    attempt.getGatewayIdempotencyKey());
-            refundAttemptService.succeed(
-                    attempt.getId(), result.gatewayRefundReference());
-        } catch (RefundDeclinedException exception) {
-            refundAttemptService.decline(attempt.getId(), exception.getMessage());
-            throw exception;
-        } catch (RefundGatewayTimeoutException exception) {
-            refundAttemptService.markUnknown(attempt.getId(), exception.getMessage());
-            throw new RefundResultUnknownException(attempt.getId());
-        }
-    }
-
-    private Reservation findOwnedReservation(Long memberId, Long reservationId) {
-        return reservationRepository.findOwnedWithItems(reservationId, memberId)
-                .orElseThrow(() -> new EntityNotFoundException(
-                        "예약을 찾을 수 없습니다: " + reservationId));
+        return cancellationService.cancel(memberId, reservationId);
     }
 
     private Long reserveItem(

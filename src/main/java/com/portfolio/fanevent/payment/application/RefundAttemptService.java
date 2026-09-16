@@ -1,14 +1,17 @@
 package com.portfolio.fanevent.payment.application;
 
+import com.portfolio.fanevent.idempotency.application.IdempotencyInProgressException;
 import com.portfolio.fanevent.payment.domain.PaymentAttempt;
 import com.portfolio.fanevent.payment.domain.PaymentAttemptStatus;
 import com.portfolio.fanevent.payment.domain.RefundAttempt;
 import com.portfolio.fanevent.payment.domain.RefundAttemptStatus;
 import com.portfolio.fanevent.payment.infrastructure.PaymentAttemptRepository;
 import com.portfolio.fanevent.payment.infrastructure.RefundAttemptRepository;
+import com.portfolio.fanevent.support.observability.OperationalMetrics;
 import jakarta.persistence.EntityNotFoundException;
 import java.math.BigDecimal;
 import java.time.Clock;
+import java.time.Instant;
 import java.util.UUID;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Propagation;
@@ -19,15 +22,21 @@ public class RefundAttemptService {
 
     private final RefundAttemptRepository refundRepository;
     private final PaymentAttemptRepository paymentRepository;
+    private final RefundProcessingProperties properties;
+    private final OperationalMetrics metrics;
     private final Clock clock;
 
     public RefundAttemptService(
             RefundAttemptRepository refundRepository,
             PaymentAttemptRepository paymentRepository,
+            RefundProcessingProperties properties,
+            OperationalMetrics metrics,
             Clock clock
     ) {
         this.refundRepository = refundRepository;
         this.paymentRepository = paymentRepository;
+        this.properties = properties;
+        this.metrics = metrics;
         this.clock = clock;
     }
 
@@ -45,13 +54,24 @@ public class RefundAttemptService {
                 .orElseThrow(() -> new EntityNotFoundException(
                         "승인된 결제 시도를 찾을 수 없습니다: " + reservationId));
         String gatewayKey = "reservation-refund-" + reservationId;
-        return refundRepository.saveAndFlush(RefundAttempt.requested(
+        Instant requestedAt = clock.instant();
+        int inserted = refundRepository.insertCancellationRequestedIfAbsent(
+                UUID.randomUUID(),
                 reservationId,
                 payment.getId(),
                 gatewayKey,
                 payment.getGatewayReference(),
                 amount,
-                clock.instant()));
+                requestedAt);
+        RefundAttempt attempt = refundRepository.findByReservationId(reservationId)
+                .orElseThrow(() -> new IllegalStateException(
+                        "환불 시도 원자 생성 결과를 찾을 수 없습니다."));
+        validateExisting(attempt, amount);
+        if (inserted == 1) {
+            metrics.refundExecutionClaim("created");
+            return attempt;
+        }
+        return recoverIncompleteRequest(attempt);
     }
 
     @Transactional(propagation = Propagation.REQUIRES_NEW)
@@ -89,8 +109,16 @@ public class RefundAttemptService {
 
     private RefundAttempt recoverIncompleteRequest(RefundAttempt attempt) {
         if (attempt.getStatus() == RefundAttemptStatus.REQUESTED) {
+            Instant now = clock.instant();
+            if (attempt.getRequestedAt().plus(properties.processingTimeout()).isAfter(now)) {
+                metrics.refundExecutionClaim("in_progress");
+                throw new IdempotencyInProgressException();
+            }
             attempt.markUnknown("이전 환불 처리의 완료 여부를 확인해야 합니다.", clock.instant());
             refundRepository.flush();
+            metrics.refundExecutionClaim("recovered_unknown");
+        } else {
+            metrics.refundExecutionClaim("reused");
         }
         return attempt;
     }
