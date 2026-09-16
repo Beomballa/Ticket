@@ -131,7 +131,7 @@ initial stock = available stock + sum(reservation item quantity)
 - 예약 rate-limit 거부 비율 > 20%가 5분 지속
 - 결제·환불 `UNKNOWN` 최장 체류 시간 > 5분이 5분 지속
 
-`promtool`로 11개 rule 문법을 검증했다. 이 값은 로컬 측정에서 출발한 초기값이며 실제 예상 트래픽·SLO와 운영 하드웨어를 기준으로 재조정해야 한다.
+`promtool`로 12개 rule 문법을 검증했다. 이 값은 로컬 측정에서 출발한 초기값이며 실제 예상 트래픽·SLO와 운영 하드웨어를 기준으로 재조정해야 한다.
 
 ## 해석과 한계
 

@@ -154,13 +154,15 @@ Authorization: Bearer <admin-token>
 - `fan_event_payment_reconciliation_total{result="unknown"}` 증가
 - `fan_event_payment_reconciliation_backlog`과 `fan_event_payment_reconciliation_oldest_age_seconds` 증가
 - 관리자 결과 불명 목록에 오래된 시도가 누적
+- `fan_event_payment_authorization_claim_total{result="recovered_unknown"}` 급증
 
 ### 즉시 대응
 
 1. 오류 응답의 `traceId`와 `paymentAttemptId`로 승인 요청 로그를 확인한다.
-2. 관리자 API에서 결제 시도의 예약 ID, 금액, 요청 시각을 확인한다. 저장된 fingerprint를 결제 토큰처럼 사용하지 않는다.
-3. `fan_event_reconciliation_automatic_total{type="payment"}`의 `resolved`, `pending`, `failed` 추이와 PG 조회 API 상태를 확인한다.
-4. 자동 대사 임대가 30초 뒤 회수되고 재시도 간격이 최대 10분 안에서 증가하는지 확인한다. 긴급 건은 단건 대사를 실행한다.
+2. `in_progress`가 짧게 증가하는 것은 정상 중복 요청일 수 있다. `recovered_unknown`이 증가하면 처리 유예시간보다 오래 실행된 PG 호출, 프로세스 중단 또는 DB 결과 기록 실패를 먼저 확인한다.
+3. 관리자 API에서 결제 시도의 예약 ID, 금액, 요청 시각을 확인한다. 저장된 fingerprint를 결제 토큰처럼 사용하지 않는다.
+4. `fan_event_reconciliation_automatic_total{type="payment"}`의 `resolved`, `pending`, `failed` 추이와 PG 조회 API 상태를 확인한다.
+5. 자동 대사 임대가 30초 뒤 회수되고 재시도 간격이 최대 10분 안에서 증가하는지 확인한다. 긴급 건은 단건 대사를 실행한다.
 
 ```http
 GET /api/admin/payment-attempts/unknown?page=0&size=20
@@ -170,8 +172,8 @@ POST /api/admin/payment-attempts/{paymentAttemptId}/reconcile
 Authorization: Bearer <admin-token>
 ```
 
-5. `resolved=false`이면 PG 결과가 아직 없다는 뜻이므로 `UNKNOWN`을 유지한다. 승인 API를 새 키로 반복 호출하지 않는다.
-6. 승인으로 확인됐지만 예약이 이미 만료됐다면 `LATE_PAYMENT_COMPENSATION` 환불이 자동 생성됐는지 확인한다. 예약을 다시 확정하거나 재고를 다시 차감하지 않는다.
+6. `resolved=false`이면 PG 결과가 아직 없다는 뜻이므로 `UNKNOWN`을 유지한다. 승인 API를 새 키로 반복 호출하지 않는다.
+7. 승인으로 확인됐지만 예약이 이미 만료됐다면 `LATE_PAYMENT_COMPENSATION` 환불이 자동 생성됐는지 확인한다. 예약을 다시 확정하거나 재고를 다시 차감하지 않는다.
 
 ### 복구 판정
 
@@ -277,7 +279,7 @@ Authorization: Bearer <admin-token>
 
 ## 초기 경보 기준
 
-`observability/alerts/fan-event-alerts.yml`은 전체 API p95 500ms, 5xx 5%, DB 연결 대기 2분과 획득 타임아웃, Outbox active backlog 100건, Outbox 지속 실패, 예약 rate-limit 거부 20%, 결제·환불 `UNKNOWN`, 늦은 승인 보상 최장 체류 5분과 대기열 정책 Redis 동기화 실패를 초기 기준으로 사용한다. 경보가 발생하면 단일 순간값이 아니라 설정된 지속 시간과 URI별 지표를 먼저 확인한다.
+`observability/alerts/fan-event-alerts.yml`은 전체 API p95 500ms, 5xx 5%, DB 연결 대기 2분과 획득 타임아웃, 결제 승인 stale claim 복구 급증, Outbox active backlog 100건, Outbox 지속 실패, 예약 rate-limit 거부 20%, 결제·환불 `UNKNOWN`, 늦은 승인 보상 최장 체류 5분과 대기열 정책 Redis 동기화 실패를 초기 기준으로 사용한다. 경보가 발생하면 단일 순간값이 아니라 설정된 지속 시간과 URI별 지표를 먼저 확인한다.
 
 이 임계값은 로컬 k6 기준선에서 출발한 값이다. 운영 SLO와 실제 트래픽 분포를 확보한 뒤 경보 민감도와 지속 시간을 조정하고 변경 근거를 사건·용량 계획 문서에 남긴다.
 

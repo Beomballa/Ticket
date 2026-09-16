@@ -97,7 +97,12 @@ export PG_WEBHOOK_SECRET='replace-with-a-random-webhook-signing-secret'
 반환을 다시 실행하지 않는다.
 
 결제 승인 전에 PG 멱등키와 토큰 fingerprint를 `payment_attempts` 원장에 기록하며 토큰 원문은
-저장하지 않는다. 응답 유실을 재현하는 `mock-timeout-approved` 토큰은 PG에는 승인 결과를 남기고
+저장하지 않는다. 원장 생성은 PostgreSQL `ON CONFLICT DO NOTHING`과 예약별 미해결 원장 partial
+unique index로 원자화했다. 같은 예약의 확정이 동시에 들어오면 최초 요청만 PG를 호출하고, 30초
+처리 유예시간 안의 중복은 `409 IDEMPOTENCY_REQUEST_IN_PROGRESS`를 반환한다. 유예시간이 지난
+`REQUESTED`만 `UNKNOWN`으로 바꿔 자동 대사로 넘긴다. 유예시간은
+`app.payment.authorization.processing-timeout`에서 조정한다. 응답 유실을 재현하는
+`mock-timeout-approved` 토큰은 PG에는 승인 결과를 남기고
 API에는 `409 PAYMENT_RESULT_UNKNOWN`을 반환한다. 관리자는
 `GET /api/admin/payment-attempts/unknown`에서 결과 불명 시도를 조회하고
 `POST /api/admin/payment-attempts/{paymentAttemptId}/reconcile`로 PG 결과를 대사한다. 승인 결과는
@@ -249,6 +254,7 @@ bundle 생성을 실행한다. Gitleaks는 현재 파일만이 아니라 전체 
 - [ADR-0023: Redis 대기열과 일회성 입장 토큰](docs/adr/0023-redis-waiting-room-admission-token.md)
 - [ADR-0024: 영속 대기열 정책과 Redis 런타임 복구](docs/adr/0024-persistent-waiting-room-policy.md)
 - [ADR-0025: 결제 확정의 순차 트랜잭션 경계](docs/adr/0025-payment-confirmation-connection-boundary.md)
+- [ADR-0026: 동시 결제 확정의 원자 원장 생성과 처리 유예시간](docs/adr/0026-payment-attempt-inflight-claim.md)
 - [이벤트 목록 조회 기준선](docs/performance/event-list-baseline.md)
 - [관리자 조회 실행 계획](docs/performance/admin-query-plan.md)
 - [offset과 커서 페이지네이션 비교](docs/performance/reservation-pagination-comparison.md)

@@ -70,6 +70,15 @@
         {"expr": "increase(hikaricp_connections_timeout_total[5m])", "legendFormat": "timeout increase {{pool}}"}
       ],
       "gridPos": {"x": 0, "y": 32, "w": 24, "h": 8}
+    },
+    {
+      "id": 9,
+      "type": "timeseries",
+      "title": "Payment authorization claims",
+      "targets": [
+        {"expr": "sum(rate(fan_event_payment_authorization_claim_total[5m])) by (result)", "legendFormat": "{{result}}"}
+      ],
+      "gridPos": {"x": 0, "y": 40, "w": 24, "h": 8}
     }
   ]
 }

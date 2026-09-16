@@ -32,12 +32,14 @@ import com.portfolio.fanevent.member.infrastructure.MemberRepository;
 import com.portfolio.fanevent.outbox.application.OutboxPublisher;
 import com.portfolio.fanevent.outbox.infrastructure.ReservationAuditOutboxHandler;
 import com.portfolio.fanevent.payment.application.PaymentGateway;
+import com.portfolio.fanevent.payment.application.PaymentAttemptService;
 import com.portfolio.fanevent.payment.application.AutomaticReconciliationService;
 import com.portfolio.fanevent.payment.application.ReconciliationCandidate;
 import com.portfolio.fanevent.payment.infrastructure.ReconciliationLeaseRepository;
 import com.portfolio.fanevent.payment.webhook.PaymentWebhookInboxStore;
 import com.portfolio.fanevent.payment.webhook.PaymentWebhookResultRecorder;
 import com.portfolio.fanevent.payment.application.RefundGatewayResult;
+import com.portfolio.fanevent.idempotency.application.IdempotencyInProgressException;
 import com.portfolio.fanevent.reservation.application.ReservationExpirationService;
 import com.portfolio.fanevent.support.observability.ReconciliationBacklogMonitor;
 import com.portfolio.fanevent.support.persistence.QBaseEntity;
@@ -175,6 +177,9 @@ class FanEventPlatformApplicationTests {
 
 	@Autowired
 	private PaymentWebhookResultRecorder paymentWebhookResultRecorder;
+
+	@Autowired
+	private PaymentAttemptService paymentAttemptService;
 
 	@Autowired
 	private WaitingRoomService waitingRoomService;
@@ -957,6 +962,210 @@ class FanEventPlatformApplicationTests {
 		assertThat(jdbcTemplate.queryForObject("""
 				SELECT status FROM payment_attempts WHERE reservation_id = ?
 				""", String.class, reservationId)).isEqualTo("APPROVED");
+	}
+
+	@Test
+	void concurrentPaymentAttemptCreationIsAtomicAndKeepsFreshRequestInProgress() throws Exception {
+		String accessToken = login(signupUniqueMember("결제 원장 경쟁 회원"), "secure-password");
+		Long inventoryId = createOnSaleInventory(2, new BigDecimal("18200.00"));
+		Long reservationId = holdReservation(accessToken, inventoryId, 1);
+		String gatewayKey = "concurrent-payment-" + UUID.randomUUID();
+		String tokenFingerprint = "a".repeat(64);
+		int workers = 6;
+		ExecutorService executor = Executors.newFixedThreadPool(workers);
+		CountDownLatch start = new CountDownLatch(1);
+		List<Future<Boolean>> attempts = new ArrayList<>();
+
+		try {
+			for (int worker = 0; worker < workers; worker++) {
+				attempts.add(executor.submit(() -> {
+					start.await();
+					try {
+						paymentAttemptService.begin(
+								reservationId,
+								gatewayKey,
+								tokenFingerprint,
+								new BigDecimal("18200.00"));
+						return true;
+					} catch (IdempotencyInProgressException exception) {
+						return false;
+					}
+				}));
+			}
+			start.countDown();
+			int owners = 0;
+			for (Future<Boolean> attempt : attempts) {
+				if (attempt.get(10, TimeUnit.SECONDS)) owners++;
+			}
+			assertThat(owners).isEqualTo(1);
+		} finally {
+			executor.shutdownNow();
+		}
+
+		Map<String, Object> stored = jdbcTemplate.queryForMap("""
+				SELECT status, requested_at, next_reconciliation_at
+				FROM payment_attempts WHERE reservation_id = ?
+				""", reservationId);
+		assertThat(stored.get("status")).isEqualTo("REQUESTED");
+		assertThat(stored.get("next_reconciliation_at")).isNull();
+		assertThat(jdbcTemplate.queryForObject("""
+				SELECT count(*) FROM payment_attempts WHERE reservation_id = ?
+				""", Integer.class, reservationId)).isEqualTo(1);
+		mockMvc.perform(get("/actuator/prometheus"))
+				.andExpect(status().isOk())
+				.andExpect(content().string(containsString(
+						"fan_event_payment_authorization_claim_total")))
+				.andExpect(content().string(containsString("result=\"in_progress\"")));
+		jdbcTemplate.update(
+				"DELETE FROM payment_attempts WHERE reservation_id = ?",
+				reservationId);
+	}
+
+	@Test
+	void staleRequestedPaymentAttemptBecomesUnknownForReconciliation() throws Exception {
+		String accessToken = login(signupUniqueMember("결제 원장 복구 회원"), "secure-password");
+		Long inventoryId = createOnSaleInventory(2, new BigDecimal("18300.00"));
+		Long reservationId = holdReservation(accessToken, inventoryId, 1);
+		String gatewayKey = "stale-payment-" + UUID.randomUUID();
+		String tokenFingerprint = "b".repeat(64);
+
+		paymentAttemptService.begin(
+				reservationId,
+				gatewayKey,
+				tokenFingerprint,
+				new BigDecimal("18300.00"));
+		jdbcTemplate.update("""
+				UPDATE payment_attempts
+				SET requested_at = ?, updated_at = ?
+				WHERE reservation_id = ?
+				""",
+				java.sql.Timestamp.from(Instant.now().minus(31, ChronoUnit.SECONDS)),
+				java.sql.Timestamp.from(Instant.now().minus(31, ChronoUnit.SECONDS)),
+				reservationId);
+
+		assertThat(paymentAttemptService.begin(
+				reservationId,
+				gatewayKey,
+				tokenFingerprint,
+				new BigDecimal("18300.00")).getStatus().name()).isEqualTo("UNKNOWN");
+		Map<String, Object> recovered = jdbcTemplate.queryForMap("""
+				SELECT status, next_reconciliation_at FROM payment_attempts WHERE reservation_id = ?
+				""", reservationId);
+		assertThat(recovered.get("status")).isEqualTo("UNKNOWN");
+		assertThat(recovered.get("next_reconciliation_at")).isNotNull();
+		jdbcTemplate.update(
+				"DELETE FROM payment_attempts WHERE reservation_id = ?",
+				reservationId);
+	}
+
+	@Test
+	void concurrentDifferentKeysStillCreateOnlyOneUnresolvedPaymentAttempt() throws Exception {
+		String accessToken = login(signupUniqueMember("결제 원장 예약 유일성 회원"), "secure-password");
+		Long inventoryId = createOnSaleInventory(2, new BigDecimal("18350.00"));
+		Long reservationId = holdReservation(accessToken, inventoryId, 1);
+		CountDownLatch start = new CountDownLatch(1);
+		ExecutorService executor = Executors.newFixedThreadPool(2);
+
+		try {
+			Future<Boolean> first = executor.submit(() -> beginPaymentAttempt(
+					start, reservationId, "different-a-" + UUID.randomUUID(), "c".repeat(64), "18350.00"));
+			Future<Boolean> second = executor.submit(() -> beginPaymentAttempt(
+					start, reservationId, "different-b-" + UUID.randomUUID(), "d".repeat(64), "18350.00"));
+			start.countDown();
+			assertThat(List.of(first.get(10, TimeUnit.SECONDS), second.get(10, TimeUnit.SECONDS)))
+					.containsExactlyInAnyOrder(true, false);
+		} finally {
+			executor.shutdownNow();
+		}
+
+		assertThat(jdbcTemplate.queryForObject("""
+				SELECT count(*) FROM payment_attempts
+				WHERE reservation_id = ? AND status IN ('REQUESTED', 'UNKNOWN')
+				""", Integer.class, reservationId)).isEqualTo(1);
+		jdbcTemplate.update(
+				"DELETE FROM payment_attempts WHERE reservation_id = ?",
+				reservationId);
+	}
+
+	@Test
+	void concurrentSameConfirmationReturnsInProgressWithoutDuplicatingAuthorization() throws Exception {
+		String accessToken = login(signupUniqueMember("동시 결제 확정 회원"), "secure-password");
+		Long inventoryId = createOnSaleInventory(2, new BigDecimal("18400.00"));
+		Long reservationId = holdReservation(accessToken, inventoryId, 1);
+		String idempotencyKey = UUID.randomUUID().toString();
+		CountDownLatch gatewayEntered = new CountDownLatch(1);
+		CountDownLatch releaseGateway = new CountDownLatch(1);
+
+		doAnswer(invocation -> {
+			gatewayEntered.countDown();
+			if (!releaseGateway.await(10, TimeUnit.SECONDS)) {
+				throw new IllegalStateException("동시 확정 테스트의 PG 대기가 시간 안에 해제되지 않았습니다.");
+			}
+			return invocation.callRealMethod();
+		}).when(paymentGateway).authorize(
+				eq(reservationId),
+				eq(new BigDecimal("18400.00")),
+				eq("mock-approved"),
+				anyString());
+
+		ExecutorService executor = Executors.newSingleThreadExecutor();
+		try {
+			Future<String> first = executor.submit(() -> mockMvc.perform(
+					post("/api/reservations/{reservationId}/confirm", reservationId)
+							.header("Authorization", "Bearer " + accessToken)
+							.header("Idempotency-Key", idempotencyKey)
+							.contentType(APPLICATION_JSON)
+							.content(objectMapper.writeValueAsString(Map.of(
+									"paymentToken", "mock-approved"))))
+					.andExpect(status().isOk())
+					.andReturn().getResponse().getContentAsString());
+
+			assertThat(gatewayEntered.await(10, TimeUnit.SECONDS)).isTrue();
+			mockMvc.perform(post("/api/reservations/{reservationId}/confirm", reservationId)
+					.header("Authorization", "Bearer " + accessToken)
+					.header("Idempotency-Key", idempotencyKey)
+					.contentType(APPLICATION_JSON)
+					.content(objectMapper.writeValueAsString(Map.of(
+							"paymentToken", "mock-approved"))))
+					.andExpect(status().isConflict())
+					.andExpect(jsonPath("$.code").value("IDEMPOTENCY_REQUEST_IN_PROGRESS"));
+			releaseGateway.countDown();
+			assertThat(objectMapper.readTree(first.get(10, TimeUnit.SECONDS)).get("status").asText())
+					.isEqualTo("CONFIRMED");
+		} finally {
+			releaseGateway.countDown();
+			executor.shutdownNow();
+		}
+
+		verify(paymentGateway, times(1)).authorize(
+				eq(reservationId),
+				eq(new BigDecimal("18400.00")),
+				eq("mock-approved"),
+				anyString());
+		assertThat(outboxCount(reservationId, "RESERVATION_CONFIRMED")).isEqualTo(1);
+		assertThat(jdbcTemplate.queryForObject("""
+				SELECT count(*) FROM payment_attempts WHERE reservation_id = ?
+				""", Integer.class, reservationId)).isEqualTo(1);
+	}
+
+	private boolean beginPaymentAttempt(
+			CountDownLatch start,
+			Long reservationId,
+			String gatewayKey,
+			String tokenFingerprint,
+			String amount
+	) throws InterruptedException {
+		start.await();
+		try {
+			paymentAttemptService.begin(
+					reservationId,
+					gatewayKey,
+					tokenFingerprint,
+					new BigDecimal(amount));
+			return true;
+		} catch (IdempotencyInProgressException exception) {
+			return false;
+		}
 	}
 
 	@Test

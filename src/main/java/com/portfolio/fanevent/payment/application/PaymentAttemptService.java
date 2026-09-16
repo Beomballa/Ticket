@@ -3,9 +3,12 @@ package com.portfolio.fanevent.payment.application;
 import com.portfolio.fanevent.payment.domain.PaymentAttempt;
 import com.portfolio.fanevent.payment.domain.PaymentAttemptStatus;
 import com.portfolio.fanevent.payment.infrastructure.PaymentAttemptRepository;
+import com.portfolio.fanevent.idempotency.application.IdempotencyInProgressException;
+import com.portfolio.fanevent.support.observability.OperationalMetrics;
 import jakarta.persistence.EntityNotFoundException;
 import java.math.BigDecimal;
 import java.time.Clock;
+import java.time.Instant;
 import java.util.List;
 import java.util.UUID;
 import org.springframework.stereotype.Service;
@@ -16,10 +19,19 @@ import org.springframework.transaction.annotation.Transactional;
 public class PaymentAttemptService {
 
     private final PaymentAttemptRepository repository;
+    private final PaymentAuthorizationProperties properties;
+    private final OperationalMetrics metrics;
     private final Clock clock;
 
-    public PaymentAttemptService(PaymentAttemptRepository repository, Clock clock) {
+    public PaymentAttemptService(
+            PaymentAttemptRepository repository,
+            PaymentAuthorizationProperties properties,
+            OperationalMetrics metrics,
+            Clock clock
+    ) {
         this.repository = repository;
+        this.properties = properties;
+        this.metrics = metrics;
         this.clock = clock;
     }
 
@@ -48,12 +60,29 @@ public class PaymentAttemptService {
             return recoverIncompleteRequest(unresolved);
         }
 
-        return repository.saveAndFlush(PaymentAttempt.requested(
+        Instant requestedAt = clock.instant();
+        int inserted = repository.insertRequestedIfAbsent(
+                UUID.randomUUID(),
                 reservationId,
                 gatewayIdempotencyKey,
                 paymentTokenFingerprint,
                 amount,
-                clock.instant()));
+                requestedAt);
+        PaymentAttempt attempt = repository.findByGatewayIdempotencyKey(gatewayIdempotencyKey)
+                .orElseGet(() -> repository
+                        .findFirstByReservationIdAndStatusInOrderByRequestedAtDesc(
+                                reservationId,
+                                List.of(PaymentAttemptStatus.REQUESTED, PaymentAttemptStatus.UNKNOWN))
+                        .orElseThrow(() -> new IllegalStateException(
+                                "결제 시도 원자 생성 결과를 찾을 수 없습니다.")));
+        if (inserted == 1) {
+            metrics.paymentAuthorizationClaim("created");
+            return attempt;
+        }
+        if (attempt.getGatewayIdempotencyKey().equals(gatewayIdempotencyKey)) {
+            validateExisting(attempt, reservationId, paymentTokenFingerprint, amount);
+        }
+        return recoverIncompleteRequest(attempt);
     }
 
     @Transactional(propagation = Propagation.REQUIRES_NEW)
@@ -99,8 +128,16 @@ public class PaymentAttemptService {
 
     private PaymentAttempt recoverIncompleteRequest(PaymentAttempt attempt) {
         if (attempt.getStatus() == PaymentAttemptStatus.REQUESTED) {
+            Instant now = clock.instant();
+            if (attempt.getRequestedAt().plus(properties.processingTimeout()).isAfter(now)) {
+                metrics.paymentAuthorizationClaim("in_progress");
+                throw new IdempotencyInProgressException();
+            }
             attempt.markUnknown("이전 결제 승인 처리의 완료 여부를 확인해야 합니다.", clock.instant());
             repository.flush();
+            metrics.paymentAuthorizationClaim("recovered_unknown");
+        } else {
+            metrics.paymentAuthorizationClaim("reused");
         }
         return attempt;
     }
