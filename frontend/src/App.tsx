@@ -21,10 +21,22 @@ import type {
   WaitingRoomSummary,
 } from './types'
 
-type View = 'events' | 'reservations' | 'admin'
+type View = 'events' | 'reservations' | 'admin' | 'terms' | 'privacy'
+
+function viewFromPath(): View {
+  if (window.location.pathname === '/terms') return 'terms'
+  if (window.location.pathname === '/privacy') return 'privacy'
+  return 'events'
+}
+
+function pathForView(view: View) {
+  if (view === 'terms') return '/terms'
+  if (view === 'privacy') return '/privacy'
+  return '/'
+}
 
 function App() {
-  const [view, setView] = useState<View>('events')
+  const [view, setView] = useState<View>(viewFromPath)
   const [member, setMember] = useState<MemberProfile | null>(null)
   const [authOpen, setAuthOpen] = useState(false)
   const [notice, setNotice] = useState('')
@@ -36,28 +48,41 @@ function App() {
       .catch(() => authStore.clear())
   }, [])
 
+  useEffect(() => {
+    const handlePopState = () => setView(viewFromPath())
+    window.addEventListener('popstate', handlePopState)
+    return () => window.removeEventListener('popstate', handlePopState)
+  }, [])
+
+  const navigate = (nextView: View) => {
+    setView(nextView)
+    const path = pathForView(nextView)
+    if (window.location.pathname !== path) window.history.pushState({}, '', path)
+    window.scrollTo({ top: 0 })
+  }
+
   const logout = () => {
     authStore.clear()
     setMember(null)
-    setView('events')
+    navigate('events')
     setNotice('로그아웃했습니다.')
   }
 
   return (
     <div className="app-shell">
       <header className="site-header">
-        <button className="brand" onClick={() => setView('events')} aria-label="이벤트 홈">
+        <button className="brand" onClick={() => navigate('events')} aria-label="이벤트 홈">
           <span className="brand-mark">S</span>
           <span>StagePass</span>
         </button>
         <nav aria-label="주요 메뉴">
-          <button className={view === 'events' ? 'nav-active' : ''} onClick={() => setView('events')}>
+          <button className={view === 'events' ? 'nav-active' : ''} onClick={() => navigate('events')}>
             이벤트
           </button>
-          <button className={view === 'reservations' ? 'nav-active' : ''} onClick={() => setView('reservations')}>
+          <button className={view === 'reservations' ? 'nav-active' : ''} onClick={() => navigate('reservations')}>
             내 예약
           </button>
-          <button className={view === 'admin' ? 'nav-active' : ''} onClick={() => setView('admin')}>
+          <button className={view === 'admin' ? 'nav-active' : ''} onClick={() => navigate('admin')}>
             운영 콘솔
           </button>
         </nav>
@@ -80,14 +105,22 @@ function App() {
           <EventCatalog member={member} onLogin={() => setAuthOpen(true)} onNotice={setNotice} />
         ) : view === 'reservations' ? (
           <MyReservations member={member} onLogin={() => setAuthOpen(true)} onNotice={setNotice} />
-        ) : (
+        ) : view === 'admin' ? (
           <AdminConsole member={member} onLogin={() => setAuthOpen(true)} />
+        ) : (
+          <LegalPage kind={view} />
         )}
       </main>
 
       <footer>
-        <span>StagePass portfolio</span>
-        <span>JPA · QueryDSL · Redis · Outbox · Observability</span>
+        <div>
+          <strong>StagePass</strong>
+          <span>한정 수량 공연·팬 이벤트 예약 포트폴리오</span>
+        </div>
+        <div className="footer-links">
+          <a href="/terms" onClick={(event) => { event.preventDefault(); navigate('terms') }}>이용약관</a>
+          <a href="/privacy" onClick={(event) => { event.preventDefault(); navigate('privacy') }}>개인정보처리방침</a>
+        </div>
       </footer>
 
       {authOpen && (
@@ -146,20 +179,15 @@ function EventCatalog({
     <>
       <section className="hero">
         <div>
-          <p className="eyebrow">FAN EVENT RESERVATION</p>
-          <h1>좋아하는 순간을<br />놓치지 마세요.</h1>
-          <p className="hero-copy">한정 수량 이벤트를 찾고, 재고 선점부터 결제 확정까지 한 흐름으로 경험합니다.</p>
-        </div>
-        <div className="hero-stat" aria-label="서비스 기술 특징">
-          <span>동시성 안전 재고</span>
-          <strong>Atomic</strong>
-          <small>조건부 UPDATE와 멱등 요청</small>
+          <p className="eyebrow">공연 · 팬 이벤트</p>
+          <h1>다음 무대에서 만나요.</h1>
+          <p className="hero-copy">공연을 선택하고, 회차와 남은 티켓을 확인하세요.</p>
         </div>
       </section>
 
-      <section className="content-section">
+      <section className="content-section" id="events">
         <div className="section-heading">
-          <div><p className="eyebrow">NOW OPEN</p><h2>판매 중인 이벤트</h2></div>
+          <div><h2>판매 중인 이벤트</h2><p className="catalog-note">회차별 잔여 수량은 상세에서 확인할 수 있습니다.</p></div>
           <form className="search" onSubmit={(event) => { event.preventDefault(); void loadEvents(keyword) }}>
             <label className="sr-only" htmlFor="event-search">이벤트 검색</label>
             <input id="event-search" value={keyword} onChange={(event) => setKeyword(event.target.value)} placeholder="아티스트 또는 이벤트" />
@@ -168,18 +196,19 @@ function EventCatalog({
         </div>
 
         {error ? <ErrorPanel message={error} retry={() => loadEvents(keyword)} /> : loading ? <CardSkeletons /> : events.length === 0 ? (
-          <EmptyState title="판매 중인 이벤트가 없습니다" description="검색어를 바꾸거나 관리자에서 이벤트를 공개해 주세요." />
+          <EmptyState title="판매 중인 이벤트가 없습니다" description="검색어를 바꾸거나 다음 판매 일정을 확인해 주세요." />
         ) : (
           <div className="event-grid">
             {events.map((event) => (
               <button className="event-card" key={event.id} onClick={() => void openEvent(event.id)}>
-                <div className={`event-art art-${event.id % 4}`}><span>{event.type}</span></div>
+                <div className="event-kind">{event.type === 'CONCERT' ? '콘서트' : event.type}</div>
                 <div className="event-info">
                   <span className="status open">{statusLabel[event.status]}</span>
                   <h3>{event.title}</h3>
                   <p>{event.artistName}</p>
-                  <time>{formatDateTime(event.salesEndAt)} 마감</time>
+                  <time dateTime={event.salesEndAt}>판매 마감 · {formatDateTime(event.salesEndAt)}</time>
                 </div>
+                <span className="event-action">회차·티켓 보기 <span aria-hidden="true">→</span></span>
               </button>
             ))}
           </div>
@@ -264,7 +293,7 @@ function EventDrawer({
     <div className="overlay" role="presentation" onMouseDown={(e) => e.target === e.currentTarget && onClose()}>
       <aside className="drawer" role="dialog" aria-modal="true" aria-labelledby="event-title">
         <button className="icon-button close" onClick={onClose} aria-label="닫기">×</button>
-        <div className={`drawer-art art-${event.id % 4}`}><span>{event.type}</span></div>
+        <div className="drawer-category">{event.type === 'CONCERT' ? '콘서트' : event.type} · 회차 및 티켓</div>
         <div className="drawer-body">
           <p className="eyebrow">{event.artistName}</p>
           <h2 id="event-title">{event.title}</h2>
@@ -812,6 +841,45 @@ function ReconciliationTable({
         </tbody></table></div>
       )}
     </section>
+  )
+}
+
+function LegalPage({ kind }: { kind: 'terms' | 'privacy' }) {
+  const isTerms = kind === 'terms'
+
+  return (
+    <article className="legal-page">
+      <header className="legal-heading">
+        <p className="eyebrow">STAGEPASS POLICY</p>
+        <h1>{isTerms ? '이용약관' : '개인정보처리방침'}</h1>
+        <p>{isTerms
+          ? 'StagePass 데모 서비스의 계정, 예매와 취소 이용 기준을 안내합니다.'
+          : '회원가입과 예매 과정에서 처리되는 정보를 현재 구현 기준으로 안내합니다.'}</p>
+        <div className="policy-notice" role="note">
+          이 문서는 포트폴리오 데모 기준 초안입니다. 운영 주체, 연락처, 시행일과 법정 보유기간은 실제 공개 전에 입력 및 검토가 필요합니다.
+        </div>
+      </header>
+
+      {isTerms ? (
+        <div className="legal-sections">
+          <section><h2>1. 서비스 목적</h2><p>StagePass는 공연·팬 이벤트를 조회하고 한정 재고를 선점해 모의 결제까지 경험할 수 있는 포트폴리오 서비스입니다. 실제 유료 결제나 실물 티켓 발권은 제공하지 않습니다.</p></section>
+          <section><h2>2. 계정 이용</h2><p>회원은 본인의 이름과 이메일로 계정을 만들 수 있으며, 계정 접근 정보가 노출되지 않도록 관리해야 합니다. 운영 콘솔은 관리자 권한이 있는 계정만 이용할 수 있습니다.</p></section>
+          <section><h2>3. 예약과 결제 확정</h2><p>예약 요청이 성공하면 재고가 일정 시간 선점되고 예약은 결제 대기 상태가 됩니다. 표시된 만료 시각 안에 모의 결제를 확정하지 않으면 예약이 만료되고 재고가 반환됩니다.</p></section>
+          <section><h2>4. 취소와 환불</h2><p>결제 대기 예약은 취소 즉시 재고가 반환됩니다. 확정 예약은 모의 환불 결과가 성공한 경우에 취소와 재고 반환이 완료됩니다.</p></section>
+          <section><h2>5. 서비스 제한</h2><p>재고 부족, 대기열 미입장, 중복 요청 처리 중 또는 시스템 점검 상황에서는 예약 요청이 제한될 수 있습니다. 동일 요청의 반복 처리를 막기 위해 멱등 요청 기준을 적용합니다.</p></section>
+          <section><h2>6. 운영 정보</h2><dl><div><dt>운영 주체</dt><dd>[입력 필요]</dd></div><div><dt>주소 및 연락처</dt><dd>[입력 필요]</dd></div><div><dt>시행일</dt><dd>[입력 필요]</dd></div></dl></section>
+        </div>
+      ) : (
+        <div className="legal-sections">
+          <section><h2>1. 처리하는 정보</h2><p>회원가입 시 이름, 이메일과 비밀번호를 처리합니다. 비밀번호는 원문이 아닌 해시로 저장됩니다. 예약 이용 시 회원 식별자, 예약 항목, 수량, 가격 스냅샷, 상태와 처리 시각을 저장합니다.</p></section>
+          <section><h2>2. 처리 목적</h2><p>계정 인증, 본인 예약 조회, 한정 재고 선점, 예약 확정·취소·만료 처리와 운영 장애 추적을 위해 정보를 사용합니다.</p></section>
+          <section><h2>3. 결제 관련 정보</h2><p>현재 서비스는 모의 결제만 제공합니다. 결제 토큰 원문은 저장하지 않고 fingerprint와 처리 상태, 멱등키 및 모의 PG 참조 정보를 기록합니다.</p></section>
+          <section><h2>4. 보유 및 삭제</h2><p>계정과 예약 데이터의 실제 보유기간, 회원 탈퇴 및 삭제 절차는 아직 정해지지 않았습니다. 공개 운영 전에 법적 근거와 서비스 정책에 맞춰 확정해야 합니다.</p></section>
+          <section><h2>5. 처리 시스템</h2><p>회원·이벤트·예약·결제 처리 기록은 PostgreSQL에 저장되며, 예매 대기열과 짧은 수명의 입장 상태는 Redis에서 처리됩니다. 운영 환경의 외부 제공자와 국외 이전 여부는 현재 확정되지 않았습니다.</p></section>
+          <section><h2>6. 담당 정보</h2><dl><div><dt>개인정보 처리 주체</dt><dd>[입력 필요]</dd></div><div><dt>문의 연락처</dt><dd>[입력 필요]</dd></div><div><dt>시행일 및 보유기간</dt><dd>[입력 필요]</dd></div></dl></section>
+        </div>
+      )}
+    </article>
   )
 }
 
