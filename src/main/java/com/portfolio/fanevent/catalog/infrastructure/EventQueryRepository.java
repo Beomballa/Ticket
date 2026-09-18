@@ -50,7 +50,7 @@ public class EventQueryRepository {
                 .join(event.artist, artist)
                 .where(
                         publicStatus(condition.status()),
-                        titleContains(condition.keyword()),
+                        keywordMatches(condition.keyword()),
                         artistIdEq(condition.artistId()),
                         typeEq(condition.type()),
                         salesStartGoe(condition.salesFrom()),
@@ -63,16 +63,43 @@ public class EventQueryRepository {
         Long total = queryFactory
                 .select(event.count())
                 .from(event)
+                .join(event.artist, artist)
                 .where(
                         publicStatus(condition.status()),
-                        titleContains(condition.keyword()),
+                        keywordMatches(condition.keyword()),
                         artistIdEq(condition.artistId()),
                         typeEq(condition.type()),
                         salesStartGoe(condition.salesFrom()),
                         salesEndLoe(condition.salesTo()))
                 .fetchOne();
 
-        return new PageImpl<>(content, pageable, total == null ? 0 : total);
+        Map<Long, EventSummary.Overview> overviews = findOverviews(content);
+        return new PageImpl<>(content.stream()
+                .map(summary -> summary.withOverview(overviews.get(summary.id())))
+                .toList(), pageable, total == null ? 0 : total);
+    }
+
+    // Aggregate only the current page; joining inventory in the paginated query duplicates events.
+    private Map<Long, EventSummary.Overview> findOverviews(List<EventSummary> content) {
+        Map<Long, EventSummary.Overview> result = new LinkedHashMap<>();
+        if (content.isEmpty()) return result;
+        List<Tuple> rows = queryFactory.select(
+                        eventSession.event.id, eventSession.startsAt.min(), eventSession.startsAt.max(),
+                        eventSession.venue.min(), eventSession.venue.countDistinct(), sellableInventory.price.min())
+                .from(eventSession)
+                .leftJoin(sellableInventory).on(sellableInventory.eventSession.eq(eventSession))
+                .where(eventSession.event.id.in(content.stream().map(EventSummary::id).toList()))
+                .groupBy(eventSession.event.id)
+                .fetch();
+        for (Tuple row : rows) {
+            Long venueCount = row.get(eventSession.venue.countDistinct());
+            String venue = row.get(eventSession.venue.min());
+            if (venueCount != null && venueCount > 1) venue = "여러 공연장 · 상세 확인";
+            result.put(row.get(eventSession.event.id), new EventSummary.Overview(
+                    row.get(eventSession.startsAt.min()), row.get(eventSession.startsAt.max()),
+                    venue, row.get(sellableInventory.price.min())));
+        }
+        return result;
     }
 
     public Optional<EventDetail> findPublicDetail(Long eventId) {
@@ -165,10 +192,11 @@ public class EventQueryRepository {
         return event.status.in(EventStatus.PUBLISHED, EventStatus.ON_SALE);
     }
 
-    private BooleanExpression titleContains(String keyword) {
+    private BooleanExpression keywordMatches(String keyword) {
         return keyword == null || keyword.isBlank()
                 ? null
-                : event.title.containsIgnoreCase(keyword.trim());
+                : event.title.containsIgnoreCase(keyword.trim())
+                        .or(artist.name.containsIgnoreCase(keyword.trim()));
     }
 
     private BooleanExpression artistIdEq(Long artistId) {

@@ -10,6 +10,7 @@
 
 ```bash
 docker compose exec -T postgres psql -U fan_event -d fan_event < scripts/demo-data.sql
+docker compose exec -T postgres psql -v ON_ERROR_STOP=1 -U fan_event -d fan_event < scripts/showcase-data.sql
 ```
 
 `http://localhost:8080/swagger-ui.html`에서 공개·회원·관리자 API 그룹과 요청·응답 스키마를 확인한다. 운영 콘솔에서는 PG 웹훅 Inbox와 늦은 승인 보상 환불의 최근 상태·오류·재처리 버튼도 확인할 수 있다.
@@ -38,6 +39,18 @@ npm run dev
 5. 관리자 계정으로 로그인해 운영 콘솔의 집계·최근 예약·재고 반환을 확인한다.
 6. `X-Request-Id`가 포함된 실패 응답은 애플리케이션 로그와 Grafana에서 같은 ID로 추적한다.
 7. Swagger UI에서 같은 흐름의 API 계약과 JWT 적용 범위를 확인한다.
+
+## 공연 탐색용 데모 데이터
+
+`showcase-data.sql`은 가상 공연 6개, 회차 12개, 입장권 종류 24개를 추가한다. 재즈·인디 콘서트·팬미팅·공개방송의 판매 중 공연 4개와 오픈 예정 공연 2개로 구성한다. 날짜는 최초 실행 시점을 기준으로 생성한다. 재실행은 이미 있는 공연을 건너뛰므로 소비한 재고, 예약, 기존 일정은 유지된다. 데이터는 운영용 Flyway migration에 포함하지 않는다.
+
+포스터 4종은 `frontend/public/images/events/`에 함께 버전 관리한다. 별도 이미지 서버나 API 키가 필요하지 않다. 아티스트·공연장·행사는 모두 가상이며 화면의 DEMO 표시를 제거하지 않는다. 실제 공연사의 포스터나 NOL 로고를 사용하지 않는다.
+
+검색은 공연 제목과 아티스트명을 대상으로 하며 장르 조건과 함께 적용된다. 목록은 12개 단위 페이지로 읽는다. `GET /api/events`의 기존 필드를 유지하고 nullable `overview`(공연 시작/종료일, 공연장, 최저 등록 가격)를 추가했다. 회차가 없으면 `overview`가 null이고, 재고가 없으면 `minPrice`가 null이다. 여러 공연장이 있으면 상세 확인을 안내한다. 최저 가격에는 매진 티켓도 포함될 수 있으므로 구매 가능 가격을 보장하지 않는다.
+
+조회는 목록·전체 개수·현재 페이지의 회차/가격 집계로 구성한다. 이벤트별 상세 API를 반복 호출하지 않는다. 공개 상태(PUBLISHED/ON_SALE)만 조회하며 DRAFT는 노출하지 않는다. 오픈 예정 데이터는 일정이 되어도 자동 판매 전환되지 않으며 운영 API로 ON_SALE 전환이 필요하다.
+
+IntelliJ에서 백엔드(8080)를 실행하고 프론트엔드(5173)를 따로 실행한 뒤 `http://localhost:5173/`을 연다. 8080 루트는 티켓팅 UI 주소가 아니다.
 
 ## 4. 검증과 관측 환경
 

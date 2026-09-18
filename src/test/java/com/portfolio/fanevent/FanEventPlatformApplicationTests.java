@@ -2392,9 +2392,20 @@ class FanEventPlatformApplicationTests {
 				.andExpect(status().isOk())
 				.andExpect(jsonPath("$.totalElements").value(1))
 				.andExpect(jsonPath("$.content[0].title").value("WORLD TOUR SEOUL"))
-				.andExpect(jsonPath("$.content[0].artistName").value("STARSHIP TEST"));
+				.andExpect(jsonPath("$.content[0].artistName").value("STARSHIP TEST"))
+				.andExpect(jsonPath("$.content[0].overview.minPrice").value(99000))
+				.andExpect(jsonPath("$.content[0].overview.venue").value("SEOUL ARENA"))
+				.andExpect(jsonPath("$.content[0].overview.startsAt").exists());
 
-		assertThat(sessionFactory.getStatistics().getPrepareStatementCount()).isEqualTo(2);
+		assertThat(sessionFactory.getStatistics().getPrepareStatementCount()).isEqualTo(3);
+
+		mockMvc.perform(get("/api/events").param("keyword", "starship").param("type", "CONCERT"))
+				.andExpect(status().isOk())
+				.andExpect(jsonPath("$.totalElements").value(1))
+				.andExpect(jsonPath("$.content[0].id").value(publicEventId));
+		mockMvc.perform(get("/api/events").param("keyword", "starship").param("type", "FAN_MEETING"))
+				.andExpect(status().isOk())
+				.andExpect(jsonPath("$.totalElements").value(0));
 
 		sessionFactory.getStatistics().clear();
 		mockMvc.perform(get("/api/events/{eventId}", publicEventId))
@@ -2420,6 +2431,41 @@ class FanEventPlatformApplicationTests {
 				.contains("Planning Time")
 				.contains("Execution Time")
 				.contains("Buffers");
+	}
+
+	@Test
+	void publicCatalogOverviewAggregatesSessionsWithoutDuplicatingPageRows() throws Exception {
+		String artistName = "CATALOG-OVERVIEW-" + UUID.randomUUID();
+		Long artistId = catalogCommandService.createArtist(artistName, "목록 집계 검증");
+		Instant now = Instant.now();
+		Long eventId = catalogCommandService.createEvent(artistId, "회차가 여러 개인 공연", "데모",
+				EventType.CONCERT, now.minusSeconds(60), now.plusSeconds(86400));
+		for (int index = 0; index < 2; index++) {
+			Long sessionId = catalogCommandService.createSession(eventId, "회차 " + index, "공연장 " + index,
+					now.plusSeconds(172800 + index * 86400), now.minusSeconds(60), now.plusSeconds(86400));
+			catalogCommandService.createInventory(sessionId, InventoryType.GENERAL_ADMISSION, "일반",
+					new BigDecimal(index == 0 ? "50000" : "30000"), 10);
+			catalogCommandService.createInventory(sessionId, InventoryType.GENERAL_ADMISSION, "프리미엄",
+					new BigDecimal("70000"), 10);
+		}
+		catalogCommandService.changeEventStatus(eventId, EventStatus.PUBLISHED);
+		Long emptyEventId = catalogCommandService.createEvent(artistId, "회차 준비 중", "데모",
+				EventType.CONCERT, now.minusSeconds(60), now.plusSeconds(86400));
+		catalogCommandService.changeEventStatus(emptyEventId, EventStatus.PUBLISHED);
+
+		mockMvc.perform(get("/api/events").param("artistId", artistId.toString()).param("size", "1"))
+				.andExpect(status().isOk())
+				.andExpect(jsonPath("$.totalElements").value(2))
+				.andExpect(jsonPath("$.content.length()").value(1))
+				.andExpect(jsonPath("$.content[0].id").value(emptyEventId))
+				.andExpect(jsonPath("$.content[0].overview").isEmpty());
+		mockMvc.perform(get("/api/events").param("artistId", artistId.toString()).param("size", "1").param("page", "1"))
+				.andExpect(status().isOk())
+				.andExpect(jsonPath("$.totalElements").value(2))
+				.andExpect(jsonPath("$.content.length()").value(1))
+				.andExpect(jsonPath("$.content[0].id").value(eventId))
+				.andExpect(jsonPath("$.content[0].overview.minPrice").value(30000))
+				.andExpect(jsonPath("$.content[0].overview.venue").value("여러 공연장 · 상세 확인"));
 	}
 
 	@Test

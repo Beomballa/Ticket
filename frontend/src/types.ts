@@ -10,6 +10,7 @@ export interface EventSummary {
   artistName: string
   salesStartAt: string
   salesEndAt: string
+  overview?: { startsAt: string; endsAt: string; venue: string | null; minPrice: number | null } | null
 }
 
 export interface InventoryDetail {

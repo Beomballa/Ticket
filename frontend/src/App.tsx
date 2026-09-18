@@ -1,10 +1,12 @@
 import { FormEvent, useCallback, useEffect, useRef, useState } from 'react'
 import { ApiError, api, authStore, describeError } from './api'
 import { formatCurrency, formatDateTime, statusLabel } from './format'
+import { CatalogBrowser } from './CatalogBrowser'
+import { eventArtwork, genreLabel, saleState } from './catalog'
+import { useDialog } from './useDialog'
 import type {
   CompensationSummary,
   EventDetail,
-  EventSummary,
   InventorySummary,
   MemberProfile,
   MemberReservationDetail,
@@ -146,77 +148,15 @@ function EventCatalog({
   onLogin: () => void
   onNotice: (message: string) => void
 }) {
-  const [events, setEvents] = useState<EventSummary[]>([])
   const [selected, setSelected] = useState<EventDetail | null>(null)
-  const [keyword, setKeyword] = useState('')
-  const [loading, setLoading] = useState(true)
-  const [error, setError] = useState('')
-
-  const loadEvents = useCallback(async (query = '') => {
-    setLoading(true)
-    setError('')
-    try {
-      setEvents((await api.listEvents(query)).content)
-    } catch (requestError) {
-      setError(describeError(requestError))
-    } finally {
-      setLoading(false)
-    }
-  }, [])
-
-  useEffect(() => { void loadEvents() }, [loadEvents])
-
-  const openEvent = async (id: number) => {
-    setError('')
-    try {
-      setSelected(await api.eventDetail(id))
-    } catch (requestError) {
-      setError(describeError(requestError))
-    }
-  }
 
   return (
     <>
-      <section className="hero">
-        <div>
-          <p className="eyebrow">공연 · 팬 이벤트</p>
-          <h1>다음 무대에서 만나요.</h1>
-          <p className="hero-copy">공연을 선택하고, 회차와 남은 티켓을 확인하세요.</p>
-        </div>
-      </section>
-
-      <section className="content-section" id="events">
-        <div className="section-heading">
-          <div><h2>판매 중인 이벤트</h2><p className="catalog-note">회차별 잔여 수량은 상세에서 확인할 수 있습니다.</p></div>
-          <form className="search" onSubmit={(event) => { event.preventDefault(); void loadEvents(keyword) }}>
-            <label className="sr-only" htmlFor="event-search">이벤트 검색</label>
-            <input id="event-search" value={keyword} onChange={(event) => setKeyword(event.target.value)} placeholder="아티스트 또는 이벤트" />
-            <button className="button dark" type="submit">검색</button>
-          </form>
-        </div>
-
-        {error ? <ErrorPanel message={error} retry={() => loadEvents(keyword)} /> : loading ? <CardSkeletons /> : events.length === 0 ? (
-          <EmptyState title="판매 중인 이벤트가 없습니다" description="검색어를 바꾸거나 다음 판매 일정을 확인해 주세요." />
-        ) : (
-          <div className="event-grid">
-            {events.map((event) => (
-              <button className="event-card" key={event.id} onClick={() => void openEvent(event.id)}>
-                <div className="event-kind">{event.type === 'CONCERT' ? '콘서트' : event.type}</div>
-                <div className="event-info">
-                  <span className="status open">{statusLabel[event.status]}</span>
-                  <h3>{event.title}</h3>
-                  <p>{event.artistName}</p>
-                  <time dateTime={event.salesEndAt}>판매 마감 · {formatDateTime(event.salesEndAt)}</time>
-                </div>
-                <span className="event-action">회차·티켓 보기 <span aria-hidden="true">→</span></span>
-              </button>
-            ))}
-          </div>
-        )}
-      </section>
+      <CatalogBrowser onSelect={setSelected} />
 
       {selected && (
         <EventDrawer
+          key={selected.id}
           event={selected}
           member={member}
           onClose={() => setSelected(null)}
@@ -250,6 +190,12 @@ function EventDrawer({
   const [waitingRoom, setWaitingRoom] = useState<WaitingRoomEntry | null>(null)
   const [queuedInventoryId, setQueuedInventoryId] = useState<number | null>(null)
   const reservationKey = useRef(crypto.randomUUID())
+  const dialogRef = useDialog(onClose)
+  const [sessionId, setSessionId] = useState(event.sessions[0]?.id)
+  const selectedSession = event.sessions.find((session) => session.id === sessionId)
+  const poster = eventArtwork(event)
+  const sale = saleState(event)
+  const sessionSale = selectedSession ? saleState({ ...selectedSession, status: event.status }) : sale
 
   const run = async (operation: () => Promise<ReservationResult>) => {
     setPending(true)
@@ -291,12 +237,19 @@ function EventDrawer({
 
   return (
     <div className="overlay" role="presentation" onMouseDown={(e) => e.target === e.currentTarget && onClose()}>
-      <aside className="drawer" role="dialog" aria-modal="true" aria-labelledby="event-title">
+      <aside ref={dialogRef} className="drawer event-drawer" role="dialog" aria-modal="true" aria-labelledby="event-title">
         <button className="icon-button close" onClick={onClose} aria-label="닫기">×</button>
-        <div className="drawer-category">{event.type === 'CONCERT' ? '콘서트' : event.type} · 회차 및 티켓</div>
+        <div className="drawer-category">{genreLabel(event.type)} · 공연 상세</div>
         <div className="drawer-body">
-          <p className="eyebrow">{event.artistName}</p>
-          <h2 id="event-title">{event.title}</h2>
+          <div className="event-detail-intro">
+            {poster && <img className="detail-poster" src={poster.src} alt={`${event.title} 데모 포스터`} width="640" height="960" />}
+            <div>
+              <p className="eyebrow">{event.artistName}</p>
+              <h2 id="event-title">{event.title}</h2>
+              <span className={`status ${sale.available ? 'open' : 'pending'}`}>{sale.label}</span>
+              <p className="catalog-note">판매 시작 · {formatDateTime(event.salesStartAt)}<br />판매 마감 · {formatDateTime(event.salesEndAt)}</p>
+            </div>
+          </div>
           <p className="muted">{event.description}</p>
           {error && <ErrorPanel message={error} />}
           {waitingRoom?.status === 'WAITING' && (
@@ -311,7 +264,14 @@ function EventDrawer({
             <ReservationPanel reservation={reservation} pending={pending} onConfirm={() => run(() => api.confirm(reservation.id))} onCancel={() => run(() => api.cancel(reservation.id))} />
           ) : (
             <div className="session-list">
-              {event.sessions.map((session) => (
+              <label className="session-picker">관람 회차 선택
+                <select value={sessionId ?? ''} onChange={(e) => setSessionId(Number(e.target.value))} disabled={pending || waitingRoom?.status === 'WAITING'}>
+                  {event.sessions.map((session) => <option key={session.id} value={session.id}>{formatDateTime(session.startsAt)} · {session.name}</option>)}
+                </select>
+              </label>
+              {!event.sessions.length && <p className="muted">회차가 아직 등록되지 않았습니다.</p>}
+              <p className="ticket-note">비지정석 입장권 · 1회 1매 선점 · 선점 후 10분 이내 모의 결제</p>
+              {(selectedSession ? [selectedSession] : []).map((session) => (
                 <section className="session" key={session.id}>
                   <div className="session-title"><div><strong>{session.name}</strong><p>{session.venue} · {formatDateTime(session.startsAt)}</p></div></div>
                   {session.inventory.map((stock) => (
@@ -319,9 +279,9 @@ function EventDrawer({
                       <div><strong>{stock.name}</strong><p>{formatCurrency(stock.price)} · 잔여 {stock.availableQuantity}</p></div>
                       <button
                         className="button primary small"
-                        disabled={pending || stock.availableQuantity === 0}
+                        disabled={pending || waitingRoom?.status === 'WAITING' || stock.availableQuantity === 0 || !sale.available || !sessionSale.available}
                         onClick={() => void reserve(stock.id)}
-                      >{stock.availableQuantity === 0 ? '매진' : '1매 예약'}</button>
+                      >{stock.availableQuantity === 0 ? '매진' : !sale.available ? sale.label : !sessionSale.available ? sessionSale.label : '1매 예약'}</button>
                     </div>
                   ))}
                 </section>
@@ -354,6 +314,7 @@ function ReservationPanel({ reservation, pending, onConfirm, onCancel }: { reser
 }
 
 function AuthDialog({ onClose, onAuthenticated }: { onClose: () => void; onAuthenticated: (member: MemberProfile) => void }) {
+  const dialogRef = useDialog(onClose)
   const [signup, setSignup] = useState(false)
   const [name, setName] = useState('')
   const [email, setEmail] = useState('')
@@ -379,7 +340,7 @@ function AuthDialog({ onClose, onAuthenticated }: { onClose: () => void; onAuthe
 
   return (
     <div className="overlay auth-overlay" role="presentation">
-      <section className="auth-card" role="dialog" aria-modal="true" aria-labelledby="auth-title">
+      <section ref={dialogRef} className="auth-card" role="dialog" aria-modal="true" aria-labelledby="auth-title">
         <button className="icon-button close" onClick={onClose} aria-label="닫기">×</button>
         <p className="eyebrow">STAGEPASS ACCOUNT</p>
         <h2 id="auth-title">{signup ? '새 계정 만들기' : '다시 만나 반가워요'}</h2>
@@ -901,10 +862,6 @@ function EmptyState({ title, description }: { title: string; description: string
 
 function AccessState({ title, description = '회원 권한에 따라 운영 API 접근이 분리되어 있습니다.', action, onAction }: { title: string; description?: string; action: string; onAction: () => void }) {
   return <section className="access-state"><span className="lock-icon">⌁</span><p className="eyebrow">RESTRICTED AREA</p><h1>{title}</h1><p>{description}</p><button className="button primary" onClick={onAction}>{action}</button></section>
-}
-
-function CardSkeletons() {
-  return <div className="event-grid" aria-label="불러오는 중">{[1, 2, 3, 4].map((item) => <div className="event-card skeleton" key={item}><div /><span /><span /></div>)}</div>
 }
 
 function InlineLoading() {

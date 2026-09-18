@@ -66,9 +66,10 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
 }
 
 export const api = {
-  listEvents: (keyword = '') => {
-    const query = new URLSearchParams({ page: '0', size: '24', status: 'ON_SALE' })
+  listEvents: (keyword = '', type = '', page = 0) => {
+    const query = new URLSearchParams({ page: String(page), size: '12' })
     if (keyword.trim()) query.set('keyword', keyword.trim())
+    if (type) query.set('type', type)
     return request<Page<EventSummary>>(`/api/events?${query}`)
   },
   eventDetail: (id: number) => request<EventDetail>(`/api/events/${id}`),
