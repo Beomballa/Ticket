@@ -99,10 +99,10 @@ export const api = {
   waitingRoomStatus: (eventId: number) => request<WaitingRoomEntry>(
     `/api/events/${eventId}/waiting-room`,
   ),
-  confirm: (reservationId: number) =>
+  confirm: (reservationId: number, idempotencyKey: string = crypto.randomUUID()) =>
     request<ReservationResult>(`/api/reservations/${reservationId}/confirm`, {
       method: 'POST',
-      headers: { 'Idempotency-Key': crypto.randomUUID() },
+      headers: { 'Idempotency-Key': idempotencyKey },
       body: JSON.stringify({ paymentToken: 'mock-approved' }),
     }),
   cancel: (reservationId: number) =>

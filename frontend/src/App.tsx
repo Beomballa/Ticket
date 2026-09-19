@@ -4,6 +4,8 @@ import { formatCurrency, formatDateTime, statusLabel } from './format'
 import { CatalogBrowser } from './CatalogBrowser'
 import { eventArtwork, genreLabel, saleState } from './catalog'
 import { useDialog } from './useDialog'
+import { pathForView, viewFromPath, type View } from './routes'
+import { PaymentDeadline, usePaymentWindow } from './PaymentDeadline'
 import type {
   CompensationSummary,
   EventDetail,
@@ -23,22 +25,8 @@ import type {
   WaitingRoomSummary,
 } from './types'
 
-type View = 'events' | 'reservations' | 'admin' | 'terms' | 'privacy'
-
-function viewFromPath(): View {
-  if (window.location.pathname === '/terms') return 'terms'
-  if (window.location.pathname === '/privacy') return 'privacy'
-  return 'events'
-}
-
-function pathForView(view: View) {
-  if (view === 'terms') return '/terms'
-  if (view === 'privacy') return '/privacy'
-  return '/'
-}
-
 function App() {
-  const [view, setView] = useState<View>(viewFromPath)
+  const [view, setView] = useState<View>(() => viewFromPath(window.location.pathname))
   const [member, setMember] = useState<MemberProfile | null>(null)
   const [authOpen, setAuthOpen] = useState(false)
   const [notice, setNotice] = useState('')
@@ -51,7 +39,7 @@ function App() {
   }, [])
 
   useEffect(() => {
-    const handlePopState = () => setView(viewFromPath())
+    const handlePopState = () => setView(viewFromPath(window.location.pathname))
     window.addEventListener('popstate', handlePopState)
     return () => window.removeEventListener('popstate', handlePopState)
   }, [])
@@ -296,16 +284,17 @@ function EventDrawer({
 
 function ReservationPanel({ reservation, pending, onConfirm, onCancel }: { reservation: ReservationResult; pending: boolean; onConfirm: () => void; onCancel: () => void }) {
   const actionable = reservation.status === 'PENDING' || reservation.status === 'CONFIRMED'
+  const payment = usePaymentWindow(reservation.status, reservation.expiresAt)
   return (
     <section className="reservation-panel">
       <span className={`status ${reservation.status.toLowerCase()}`}>{statusLabel[reservation.status]}</span>
       <h3>예약 #{reservation.id}</h3>
       {reservation.items.map((item) => <p key={item.inventoryId}>{item.inventoryName} × {item.quantity}</p>)}
       <strong className="reservation-total">{formatCurrency(reservation.totalAmount)}</strong>
-      {reservation.status === 'PENDING' && <small>{formatDateTime(reservation.expiresAt)}까지 결제</small>}
+      {reservation.status === 'PENDING' && <><PaymentDeadline expiresAt={reservation.expiresAt} {...payment} /><small>창을 닫아도 내 예약에서 결제를 이어갈 수 있습니다.</small></>}
       {actionable && (
         <div className="button-row">
-          {reservation.status === 'PENDING' && <button className="button primary" disabled={pending} onClick={onConfirm}>모의 결제 확정</button>}
+          {reservation.status === 'PENDING' && <button className="button primary" disabled={pending || !payment.canPay} onClick={onConfirm}>모의 결제 확정</button>}
           <button className="button ghost" disabled={pending} onClick={onCancel}>예약 취소</button>
         </div>
       )}
@@ -369,6 +358,7 @@ function MyReservations({
 }) {
   const [reservations, setReservations] = useState<MemberReservationSummary[]>([])
   const [selected, setSelected] = useState<MemberReservationDetail | null>(null)
+  const headingRef = useRef<HTMLHeadingElement>(null)
   const [status, setStatus] = useState('')
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
@@ -402,14 +392,14 @@ function MyReservations({
   return (
     <section className="reservation-page">
       <div className="admin-heading">
-        <div><p className="eyebrow">MY STAGEPASS</p><h1>내 예약</h1><p className="muted">선점부터 확정·취소·만료까지 예약 상태를 확인합니다.</p></div>
+        <div><p className="eyebrow">MY STAGEPASS</p><h1 ref={headingRef} tabIndex={-1}>내 예약</h1><p className="muted">선점부터 확정·취소·만료까지 예약 상태를 확인합니다.</p></div>
         <Filter value={status} onChange={setStatus} options={[["", "전체 상태"], ["PENDING", "결제 대기"], ["CONFIRMED", "확정"], ["CANCELLED", "취소"], ["EXPIRED", "만료"], ["FAILED", "처리 실패"]]} />
       </div>
       {error && <ErrorPanel message={error} retry={load} />}
-      {loading ? <InlineLoading /> : reservations.length === 0 ? (
+      {loading && reservations.length === 0 ? <InlineLoading /> : reservations.length === 0 ? (
         <EmptyState title="예약 내역이 없습니다" description="판매 중인 이벤트에서 첫 예약을 만들어 보세요." />
       ) : (
-        <div className="reservation-history">
+        <div className="reservation-history" aria-busy={loading}>
           {reservations.map((item) => (
             <button className="reservation-history-card" key={item.reservationId} onClick={() => void open(item.reservationId)}>
               <div>
@@ -424,11 +414,24 @@ function MyReservations({
       )}
       {selected && (
         <ReservationDetailDrawer
+          key={selected.reservationId}
           reservation={selected}
-          onClose={() => setSelected(null)}
+          onLogin={onLogin}
+          onClose={() => { setSelected(null); headingRef.current?.focus() }}
+          onRefresh={async () => {
+            const detail = await api.reservationDetail(selected.reservationId)
+            setSelected((current) => current?.reservationId === detail.reservationId ? detail : current)
+            await load()
+          }}
+          onConfirm={async (idempotencyKey) => {
+            const result = await api.confirm(selected.reservationId, idempotencyKey)
+            setSelected((current) => current?.reservationId === result.id ? { ...current, status: result.status } : current)
+            onNotice('모의 결제를 확정했습니다. 실제 금액은 청구되지 않습니다.')
+            await load()
+          }}
           onCancel={async () => {
-            await api.cancel(selected.reservationId)
-            setSelected(await api.reservationDetail(selected.reservationId))
+            const result = await api.cancel(selected.reservationId)
+            setSelected((current) => current?.reservationId === result.id ? { ...current, status: result.status } : current)
             await load()
             onNotice('예약을 취소하고 재고를 반환했습니다.')
           }}
@@ -441,19 +444,42 @@ function MyReservations({
 function ReservationDetailDrawer({
   reservation,
   onClose,
+  onLogin,
   onCancel,
+  onConfirm,
+  onRefresh,
 }: {
   reservation: MemberReservationDetail
   onClose: () => void
+  onLogin: () => void
   onCancel: () => Promise<void>
+  onConfirm: (idempotencyKey: string) => Promise<void>
+  onRefresh: () => Promise<void>
 }) {
   const [pending, setPending] = useState(false)
   const [error, setError] = useState('')
   const cancellable = reservation.status === 'PENDING' || reservation.status === 'CONFIRMED'
+  const dialogRef = useDialog(onClose)
+  const confirmationKey = useRef(crypto.randomUUID())
+  const inFlight = useRef(false)
+  const payment = usePaymentWindow(reservation.status, reservation.expiresAt)
+
+  const run = async (operation: () => Promise<void>) => {
+    if (inFlight.current) return
+    inFlight.current = true
+    setPending(true)
+    setError('')
+    try { await operation() }
+    catch (requestError) {
+      if (requestError instanceof ApiError && requestError.status === 401) onLogin()
+      setError(`${describeError(requestError)} · 최신 상태를 확인해 주세요.`)
+    }
+    finally { inFlight.current = false; setPending(false) }
+  }
 
   return (
     <div className="overlay" role="presentation" onMouseDown={(event) => event.target === event.currentTarget && onClose()}>
-      <aside className="drawer" role="dialog" aria-modal="true" aria-labelledby="reservation-detail-title">
+      <aside ref={dialogRef} className="drawer" role="dialog" aria-modal="true" aria-labelledby="reservation-detail-title">
         <button className="icon-button close" onClick={onClose} aria-label="닫기">×</button>
         <div className="drawer-body reservation-detail">
           <p className="eyebrow">RESERVATION DETAIL</p>
@@ -470,8 +496,13 @@ function ReservationDetailDrawer({
             ))}
           </div>
           <div className="reservation-detail-total"><span>총 결제 금액</span><strong>{formatCurrency(reservation.totalAmount)}</strong></div>
-          {reservation.status === 'PENDING' && <small className="muted">{formatDateTime(reservation.expiresAt)}까지 결제 대기</small>}
-          {cancellable && <button className="button ghost full" disabled={pending} onClick={async () => { setPending(true); setError(''); try { await onCancel() } catch (requestError) { setError(describeError(requestError)) } finally { setPending(false) } }}>{pending ? '처리 중…' : '예약 취소'}</button>}
+          {reservation.status === 'PENDING' && <PaymentDeadline expiresAt={reservation.expiresAt} {...payment} />}
+          <div className="reservation-actions" aria-busy={pending}>
+            {reservation.status === 'PENDING' && <button className="button primary full" disabled={pending || !payment.canPay} onClick={() => void run(() => onConfirm(confirmationKey.current))}>모의 결제 이어하기</button>}
+            {cancellable && <button className="button ghost full" disabled={pending} onClick={() => void run(onCancel)}>예약 취소</button>}
+            <button className="button ghost full" disabled={pending} onClick={() => void run(onRefresh)}>최신 상태 확인</button>
+          </div>
+          {pending && <p role="status" className="muted">요청을 처리하고 있습니다.</p>}
         </div>
       </aside>
     </div>
