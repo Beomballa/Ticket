@@ -6,6 +6,7 @@
   --ink: #1f2925;
   --muted: #5c6963;
   --line: #d8e2dd;
+  --control-line: #81938a;
   --surface: #ffffff;
   --surface-subtle: #f8faf9;
   --accent: #075e46;
@@ -21,6 +22,12 @@
   --info-soft: #edf2ff;
   --radius: 12px;
   --control-radius: 8px;
+  --dialog-radius: 16px;
+  --content-width: 1180px;
+  --page-gutter: 24px;
+  --space-field: 8px;
+  --space-group: 16px;
+  --space-panel: 24px;
   --space-section: 48px;
   --shadow: 0 16px 40px rgb(31 41 37 / 12%);
 }
@@ -33,11 +40,11 @@ button:focus-visible, input:focus-visible, select:focus-visible, a:focus-visible
 
 .app-shell { min-height: 100vh; display: flex; flex-direction: column; }
 .app-shell > main { flex: 1; }
-.site-header { height: 72px; padding: 0 max(24px, calc((100vw - 1180px) / 2)); display: flex; align-items: center; gap: 32px; background: var(--surface); border-bottom: 1px solid var(--line); position: sticky; top: 0; z-index: 30; }
+.site-header { height: 72px; padding: 0 max(var(--page-gutter), calc((100% - var(--content-width)) / 2 + var(--page-gutter))); display: flex; align-items: center; gap: 32px; background: var(--surface); border-bottom: 1px solid var(--line); position: sticky; top: 0; z-index: 30; }
 .brand { min-width: 44px; min-height: 44px; border: 0; background: none; padding: 0; display: flex; align-items: center; gap: 10px; font-weight: 700; font-size: 18px; cursor: pointer; }
 .brand-mark { display: grid; place-items: center; width: 32px; height: 32px; color: white; border-radius: 10px; background: var(--accent); }
 nav { display: flex; height: 100%; gap: 6px; }
-nav button { min-height: 44px; border: 0; background: none; padding: 0 16px; color: var(--muted); cursor: pointer; border-bottom: 2px solid transparent; }
+nav button { min-height: 44px; border: 0; background: none; padding: 0 16px; color: var(--muted); cursor: pointer; border-bottom: 2px solid transparent; white-space: nowrap; }
 nav button.nav-active { color: var(--ink); border-bottom-color: var(--accent); font-weight: 700; }
 .account-actions { margin-left: auto; display: flex; align-items: center; gap: 10px; }
 .member-chip { font-size: 13px; color: var(--muted); }
@@ -48,12 +55,14 @@ nav button.nav-active { color: var(--ink); border-bottom-color: var(--accent); f
 .eyebrow { margin: 0; color: var(--accent); font-size: 13px; font-weight: 600; letter-spacing: .025em; }
 .catalog-note { margin: 10px 0 0; color: var(--muted); font-size: 14px; line-height: 1.5; }
 
-.content-section, .admin-page, .reservation-page { max-width: 1180px; margin: 0 auto; padding: 0 24px 64px; }
-.section-heading, .admin-heading { display: flex; align-items: end; justify-content: space-between; gap: 24px; margin-bottom: 26px; }
+.content-section, .admin-page, .reservation-page { max-width: var(--content-width); margin: 0 auto; padding: 0 var(--page-gutter) 64px; }
+.section-heading, .admin-heading { display: flex; align-items: end; justify-content: space-between; gap: var(--space-panel); margin-bottom: var(--space-panel); }
 .section-heading h2, .table-heading h2 { margin: 8px 0 0; font-size: 28px; letter-spacing: -.035em; }
 .search { display: flex; gap: 8px; align-items: stretch; }
 .search .button { flex: 0 0 auto; white-space: nowrap; min-width: 68px; }
-input, select { border: 1px solid var(--line); background: white; border-radius: 11px; padding: 11px 13px; min-width: 0; }
+input, select { border: 1px solid var(--control-line); background: var(--surface); border-radius: var(--control-radius); padding: 10px 12px; min-width: 0; min-height: 44px; font-size: 16px; font-weight: 400; line-height: 1.4; }
+input::placeholder { color: var(--muted); opacity: 1; }
+input:focus-visible, select:focus-visible { border-color: var(--accent); }
 .search input { width: min(320px, 45vw); }
 .button { min-height: 44px; border: 1px solid transparent; border-radius: var(--control-radius); padding: 11px 16px; font-weight: 600; cursor: pointer; transition: background-color .15s ease; }
 .button.primary:hover:not(:disabled) { background: var(--accent-strong); }
@@ -90,14 +99,14 @@ input, select { border: 1px solid var(--line); background: white; border-radius:
 
 .overlay { position: fixed; inset: 0; z-index: 50; display: flex; justify-content: flex-end; background: rgb(14 14 18 / 52%); }
 .drawer { position: relative; width: min(620px, 100%); height: 100%; overflow-y: auto; background: var(--surface); box-shadow: -16px 0 50px rgb(0 0 0 / 12%); animation: slide-in .25s ease-out; }
-.drawer-category { padding: 32px 80px 24px 34px; border-bottom: 1px solid var(--line); color: var(--accent); font-size: 14px; }
-.drawer-body { padding: 34px; }
+.drawer-category { padding: 32px 80px 24px 32px; border-bottom: 1px solid var(--line); color: var(--accent); font-size: 14px; }
+.drawer-body { padding: 32px; }
 .drawer-body h2, .auth-card h2 { margin: 9px 0 12px; font-size: 34px; letter-spacing: -.04em; }
 .muted { color: var(--muted); line-height: 1.6; }
 .icon-button { width: 44px; height: 44px; border: 1px solid var(--line); border-radius: var(--control-radius); display: grid; place-items: center; background: white; cursor: pointer; font-size: 24px; }
 .close { position: absolute; right: 18px; top: 18px; z-index: 2; }
-.session-list { margin-top: 30px; display: grid; gap: 18px; }
-.session { border: 1px solid var(--line); border-radius: 15px; overflow: hidden; }
+.session-list { margin-top: 32px; display: grid; gap: var(--space-group); }
+.session { border: 1px solid var(--line); border-radius: var(--radius); overflow: hidden; }
 .session-title { padding: 16px; background: var(--surface-subtle); }
 .session p, .stock-row p { margin: 5px 0 0; color: var(--muted); font-size: 13px; }
 .stock-row { padding: 15px 16px; display: flex; align-items: center; justify-content: space-between; gap: 16px; border-top: 1px solid var(--line); }
@@ -110,9 +119,9 @@ input, select { border: 1px solid var(--line); background: white; border-radius:
 .reservation-total { margin-top: 12px; font-size: 30px; }
 
 .auth-overlay { justify-content: center; align-items: center; padding: 20px; }
-.auth-card { position: relative; width: min(430px, 100%); max-height: calc(100dvh - 40px); overflow-y: auto; padding: 68px 32px 32px; background: white; border-radius: 16px; box-shadow: var(--shadow); }
-.auth-card form { margin: 25px 0 12px; display: grid; gap: 15px; }
-.auth-card label { display: grid; gap: 7px; font-size: 13px; font-weight: 700; }
+.auth-card { position: relative; width: min(430px, 100%); max-height: calc(100dvh - 40px); overflow-y: auto; padding: 72px 32px 32px; background: white; border-radius: var(--dialog-radius); box-shadow: var(--shadow); }
+.auth-card form { margin: 24px 0 12px; display: grid; gap: var(--space-group); }
+.auth-card label { display: grid; gap: var(--space-field); font-size: 13px; font-weight: 700; }
 .text-button { width: 100%; border: 0; background: none; color: var(--accent); padding: 8px; cursor: pointer; font-weight: 700; }
 
 .reservation-page { padding-top: 64px; }
@@ -125,7 +134,7 @@ input, select { border: 1px solid var(--line); background: white; border-radius:
 .reservation-history-meta strong { font-size: 20px; }
 .reservation-detail { padding-top: 70px; }
 .reservation-detail-items { margin: 28px 0 20px; display: grid; gap: 12px; }
-.reservation-detail-items article { padding: 18px; display: grid; grid-template-columns: 1fr auto; gap: 20px; border: 1px solid var(--line); border-radius: 14px; }
+.reservation-detail-items article { padding: var(--space-group); display: grid; grid-template-columns: 1fr auto; gap: var(--space-panel); border: 1px solid var(--line); border-radius: var(--radius); }
 .reservation-detail-items article > div:last-child { text-align: right; }
 .reservation-detail-items p, .reservation-detail-items time { margin: 5px 0 0; color: var(--muted); font-size: 12px; }
 .reservation-detail-total { margin: 20px 0; padding-top: 20px; display: flex; align-items: center; justify-content: space-between; border-top: 1px solid var(--line); }
@@ -153,7 +162,7 @@ input, select { border: 1px solid var(--line); background: white; border-radius:
 .waiting-room-admin-card { margin-top: 20px; }
 .waiting-room-policy-form { padding: 16px 20px; display: grid; grid-template-columns: repeat(4, minmax(110px, 1fr)) auto; align-items: end; gap: 10px; border-bottom: 1px solid var(--line); background: var(--surface-subtle); }
 .waiting-room-policy-form label { display: grid; gap: 5px; color: var(--muted); font-size: 11px; font-weight: 700; }
-.waiting-room-policy-form input { width: 100%; padding: 8px 10px; }
+.waiting-room-policy-form input { width: 100%; }
 .compact-actions { display: flex; gap: 6px; }
 .reconciliation-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; margin-top: 20px; }
 .action-notice { margin: 0 0 20px; padding: 12px 14px; border: 1px solid #b7dfcc; border-radius: 11px; color: var(--accent); background: var(--success-soft); font-size: 13px; }
@@ -163,7 +172,7 @@ input, select { border: 1px solid var(--line); background: white; border-radius:
 .table-heading { min-height: 90px; padding: 19px 20px; display: flex; align-items: center; justify-content: space-between; gap: 14px; border-bottom: 1px solid var(--line); }
 .table-heading h2 { margin: 0; font-size: 20px; }
 .table-heading p { margin: 5px 0 0; color: var(--muted); font-size: 12px; }
-.table-heading select { padding: 8px 10px; font-size: 12px; }
+.table-heading select { padding: 8px 12px; }
 .table-scroll { overflow: auto; }
 table { width: 100%; border-collapse: collapse; font-size: 13px; }
 th { padding: 11px 14px; color: var(--muted); background: var(--surface-subtle); text-align: left; font-size: 11px; }
@@ -182,10 +191,9 @@ td { padding: 14px; border-top: 1px solid #eeeeeb; white-space: nowrap; }
 .empty-state { padding: 56px 20px; text-align: center; color: var(--muted); }
 .empty-state strong { color: var(--ink); }
 .empty-state p { margin: 7px 0 0; font-size: 13px; }
-.access-state { max-width: 680px; margin: 80px auto; padding: 80px 24px; text-align: center; }
-.access-state h1 { margin: 12px 0; font-size: 42px; letter-spacing: -.045em; }
+.access-state { max-width: 680px; margin: 0 auto; padding: 64px var(--page-gutter); text-align: center; }
+.access-state h1 { margin: 0 0 16px; font-size: 32px; line-height: 1.35; letter-spacing: -.035em; word-break: keep-all; overflow-wrap: anywhere; }
 .access-state > p:not(.eyebrow) { color: var(--muted); margin: 0 0 24px; }
-.lock-icon { display: grid; place-items: center; width: 60px; height: 60px; margin: 0 auto 24px; border-radius: 18px; color: var(--accent); background: var(--accent-soft); font-size: 30px; }
 .inline-loading { padding: 60px; display: flex; justify-content: center; align-items: center; gap: 10px; color: var(--muted); }
 .inline-loading span { width: 14px; height: 14px; border: 2px solid var(--line); border-top-color: var(--accent); border-radius: 50%; animation: spin .7s linear infinite; }
 .skeleton { min-height: 192px; padding: 28px; cursor: default; }
@@ -195,7 +203,7 @@ td { padding: 14px; border-top: 1px solid #eeeeeb; white-space: nowrap; }
 .skeleton span:last-child { width: 55%; }
 .skeleton div, .skeleton span { background: linear-gradient(90deg, #eee 25%, #f8f8f8 50%, #eee 75%); background-size: 200% 100%; animation: shimmer 1.5s infinite; }
 .toast { position: fixed; left: 50%; top: 88px; z-index: 80; transform: translateX(-50%); padding: 11px 16px; border-radius: 999px; color: white; background: var(--ink); box-shadow: var(--shadow); font-size: 13px; animation: toast 3s both; }
-footer { width: 100%; max-width: 1180px; margin: 0 auto; padding: 30px 24px 36px; display: flex; justify-content: space-between; gap: 24px; border-top: 1px solid var(--line); color: var(--muted); font-size: 12px; }
+footer { width: 100%; max-width: var(--content-width); margin: 0 auto; padding: 32px var(--page-gutter); display: flex; justify-content: space-between; gap: var(--space-panel); border-top: 1px solid var(--line); color: var(--muted); font-size: 12px; }
 footer > div:first-child { display: grid; gap: 6px; }
 footer strong { color: var(--ink); font-size: 14px; }
 .footer-links { display: flex; align-items: flex-start; gap: 18px; }
@@ -217,7 +225,7 @@ footer strong { color: var(--ink); font-size: 14px; }
 .legal-sections dd { margin: 0; font-weight: 700; }
 .sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0; }
 
-.catalog-page { max-width: 1180px; margin: 0 auto; padding: 28px 24px 64px; }
+.catalog-page { max-width: var(--content-width); margin: 0 auto; padding: 32px var(--page-gutter) 64px; }
 .catalog-toolbar { display: flex; align-items: center; justify-content: space-between; gap: 24px; }
 .catalog-intro { margin: 8px 0 0; font-size: 21px; font-weight: 600; letter-spacing: -.025em; }
 .catalog-search input { width: min(380px, 40vw); background: var(--surface); }
@@ -323,7 +331,6 @@ footer strong { color: var(--ink); font-size: 14px; }
 @media (max-width: 360px) {
   .featured-show { grid-template-columns: minmax(0, 1fr) 88px; gap: 12px; padding: 20px 14px; }
   .feature-copy h1 { font-size: 22px; }
-  .feature-switcher button { min-width: 36px; }
 }
 
 @keyframes slide-in { from { transform: translateX(20px); opacity: 0; } }
@@ -340,10 +347,11 @@ footer strong { color: var(--ink); font-size: 14px; }
 }
 
 @media (max-width: 680px) {
+  :root { --page-gutter: 16px; }
   .site-header { height: auto; min-height: 68px; padding: 10px 16px; gap: 12px; flex-wrap: wrap; }
   .member-chip { display: none; }
   nav { height: 48px; order: 3; width: 100%; justify-content: center; border-top: 1px solid var(--line); }
-  nav button { flex: 1; }
+  nav button { flex: 1; padding-inline: 8px; }
   .hero { padding: 32px 16px; }
   .hero h1 { font-size: clamp(28px, 7.5vw, 36px); line-height: 1.25; }
   .hero-copy { font-size: 16px; line-height: 1.75; }
@@ -358,8 +366,12 @@ footer strong { color: var(--ink); font-size: 14px; }
   .drawer-category { padding-left: 20px; }
   .stock-row > div { min-width: 0; overflow-wrap: anywhere; }
   .stock-row .button { flex-shrink: 0; }
-  .drawer-body { padding: 26px 20px; }
+  .drawer-body { padding: 24px 20px; }
   .drawer-body h2 { font-size: 28px; }
+  .event-detail-intro h2 { font-size: 23px; }
+  .reservation-detail { padding-top: 80px; }
+  .auth-card { padding: 72px 20px 24px; }
+  .auth-card h2 { font-size: 26px; line-height: 1.3; word-break: keep-all; }
   .metric-grid { grid-template-columns: 1fr 1fr; }
   .metric { min-height: 110px; padding: 17px; }
   .metric strong { font-size: 21px; }
@@ -369,7 +381,8 @@ footer strong { color: var(--ink); font-size: 14px; }
   .reservation-history-meta { width: 100%; justify-items: start; }
   .reservation-detail-items article { grid-template-columns: 1fr; }
   .reservation-detail-items article > div:last-child { text-align: left; }
-  .access-state h1 { font-size: 34px; }
+  .access-state { padding-block: var(--space-section); }
+  .access-state h1 { font-size: 26px; }
   footer { flex-direction: column; }
   .footer-links { flex-wrap: wrap; }
   .legal-page { padding: 56px 18px 88px; }

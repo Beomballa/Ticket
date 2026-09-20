@@ -891,8 +891,8 @@ function EmptyState({ title, description }: { title: string; description: string
   return <div className="empty-state"><strong>{title}</strong><p>{description}</p></div>
 }
 
-function AccessState({ title, description = '회원 권한에 따라 운영 API 접근이 분리되어 있습니다.', action, onAction }: { title: string; description?: string; action: string; onAction: () => void }) {
-  return <section className="access-state"><span className="lock-icon">⌁</span><p className="eyebrow">RESTRICTED AREA</p><h1>{title}</h1><p>{description}</p><button className="button primary" onClick={onAction}>{action}</button></section>
+function AccessState({ title, description = '운영 화면은 관리자 계정으로 이용할 수 있습니다.', action, onAction }: { title: string; description?: string; action: string; onAction: () => void }) {
+  return <section className="access-state"><h1>{title}</h1><p>{description}</p><button className="button primary" onClick={onAction}>{action}</button></section>
 }
 
 function InlineLoading() {
