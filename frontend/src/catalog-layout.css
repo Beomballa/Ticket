@@ -1,0 +1,36 @@
+/* 공연 탐색 기준 화면: 구조와 간격. 색상·입력·버튼은 styles.css의 공통 토큰 사용. */
+.catalog-page {
+  --catalog-section-gap: 56px;
+  --catalog-card-column-gap: 24px;
+  --catalog-card-row-gap: 36px;
+  max-width: var(--content-width);
+  margin: 0 auto;
+  padding: 32px var(--page-gutter) 64px;
+}
+
+.catalog-toolbar { display: flex; align-items: center; justify-content: space-between; gap: var(--space-panel); }
+.featured-show { display: grid; grid-template-columns: minmax(0, 1fr) 224px; gap: 32px; padding: 24px 40px; border-radius: var(--radius); background: #e5f3ec; overflow: hidden; }
+.catalog-results { margin-top: var(--catalog-section-gap); }
+.poster-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: var(--catalog-card-row-gap) var(--catalog-card-column-gap); }
+.booking-guide { border-top: 1px solid var(--line); margin-top: var(--catalog-section-gap); padding-top: var(--space-panel); }
+
+@media (max-width: 980px) {
+  .catalog-page { --catalog-card-column-gap: 20px; --catalog-card-row-gap: 30px; }
+  .featured-show { grid-template-columns: minmax(0, 1fr) 208px; gap: 24px; padding: 24px; }
+  .poster-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+}
+
+@media (max-width: 680px) {
+  .catalog-page { --catalog-section-gap: 40px; --catalog-card-column-gap: 14px; --catalog-card-row-gap: 28px; padding: 20px var(--page-gutter) 40px; }
+  .catalog-toolbar { align-items: stretch; flex-direction: column; gap: 18px; }
+  .featured-show { grid-template-columns: minmax(0, 1fr) 104px; gap: 20px 16px; padding: 20px; align-items: center; }
+  .feature-copy { display: contents; }
+  .feature-heading { grid-column: 1; grid-row: 1; }
+  .feature-details { grid-column: 1 / -1; grid-row: 2; }
+  .feature-poster { grid-column: 2; grid-row: 1; }
+  .poster-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+
+@media (max-width: 360px) {
+  .featured-show { grid-template-columns: minmax(0, 1fr) 88px; gap: 12px; padding: 20px 14px; }
+}

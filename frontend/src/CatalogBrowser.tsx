@@ -75,17 +75,21 @@ export function CatalogBrowser({ onSelect }: { onSelect: (event: EventDetail) =>
 
     {showFeature ? <section className={`featured-show theme-${art.image}`} aria-label="주목할 공연">
       <div className="feature-copy">
-        <p className="feature-kicker">{genreLabel(feature.type)} · {saleState(feature).label}</p>
-        <h1>{art.headline}</h1>
-        <p className="feature-description">{art.copy}</p>
-        <div className="feature-facts"><strong>{feature.title}</strong>
-          {feature.overview && <><span>{feature.overview.venue}</span><span>{dateRange(feature.overview.startsAt, feature.overview.endsAt)}</span></>}
+        <div className="feature-heading">
+          <p className="feature-kicker">{genreLabel(feature.type)} · {saleState(feature).label}</p>
+          <h1>{art.headline}</h1>
         </div>
-        <button className="button primary" aria-busy={opening === feature.id} onClick={() => void open(feature.id)}>공연 상세 · 예매 <span aria-hidden="true">↗</span></button>
-        <div className="feature-switcher" role="group" aria-label="주목할 공연 선택">
-          {featured.map((event, index) => <button key={event.id} aria-label={event.title} aria-pressed={index === featureIndex}
-            onClick={() => setFeatureIndex(index)}>{String(index + 1).padStart(2, '0')}</button>)}
-          <span>직접 넘겨보기</span>
+        <div className="feature-details">
+          <p className="feature-description">{art.copy}</p>
+          <div className="feature-facts"><strong>{feature.title}</strong>
+            {feature.overview && <><span>{feature.overview.venue}</span><span>{dateRange(feature.overview.startsAt, feature.overview.endsAt)}</span></>}
+          </div>
+          <button className="button primary" aria-busy={opening === feature.id} onClick={() => void open(feature.id)}>공연 상세 · 예매 <span aria-hidden="true">↗</span></button>
+          <div className="feature-switcher" role="group" aria-label="주목할 공연 선택">
+            {featured.map((event, index) => <button key={event.id} aria-label={event.title} aria-pressed={index === featureIndex}
+              onClick={() => setFeatureIndex(index)}>{String(index + 1).padStart(2, '0')}</button>)}
+            <span>직접 넘겨보기</span>
+          </div>
         </div>
       </div>
       <img className="feature-poster" src={art.src} alt={`${feature.title} 데모 포스터`} width="640" height="960" fetchPriority="high" />
