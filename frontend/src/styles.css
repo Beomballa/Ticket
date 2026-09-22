@@ -1,4 +1,5 @@
 @import './catalog-layout.css';
+@import './event-detail.css';
 
 :root {
   font-family: -apple-system, BlinkMacSystemFont, "Apple SD Gothic Neo", "Pretendard Variable", Pretendard, "Noto Sans KR", "Segoe UI", sans-serif;

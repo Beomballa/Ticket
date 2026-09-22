@@ -235,10 +235,16 @@ function EventDrawer({
               <p className="eyebrow">{event.artistName}</p>
               <h2 id="event-title">{event.title}</h2>
               <span className={`status ${sale.available ? 'open' : 'pending'}`}>{sale.label}</span>
-              <p className="catalog-note">판매 시작 · {formatDateTime(event.salesStartAt)}<br />판매 마감 · {formatDateTime(event.salesEndAt)}</p>
             </div>
           </div>
-          <p className="muted">{event.description}</p>
+          <dl className="event-sale-dates">
+            <div><dt>판매 시작</dt><dd>{formatDateTime(event.salesStartAt)}</dd></div>
+            <div><dt>판매 마감</dt><dd>{formatDateTime(event.salesEndAt)}</dd></div>
+          </dl>
+          <section className="event-description" aria-labelledby="event-description-heading">
+            <h3 id="event-description-heading">공연 소개</h3>
+            <p>{event.description}</p>
+          </section>
           {error && <ErrorPanel message={error} />}
           {waitingRoom?.status === 'WAITING' && (
             <section className="waiting-room-card" role="status">
@@ -251,7 +257,7 @@ function EventDrawer({
           {reservation ? (
             <ReservationPanel reservation={reservation} pending={pending} onConfirm={() => run(() => api.confirm(reservation.id))} onCancel={() => run(() => api.cancel(reservation.id))} />
           ) : (
-            <div className="session-list">
+            <section className="session-list" aria-label="회차와 입장권 선택">
               <label className="session-picker">관람 회차 선택
                 <select value={sessionId ?? ''} onChange={(e) => setSessionId(Number(e.target.value))} disabled={pending || waitingRoom?.status === 'WAITING'}>
                   {event.sessions.map((session) => <option key={session.id} value={session.id}>{formatDateTime(session.startsAt)} · {session.name}</option>)}
@@ -274,7 +280,7 @@ function EventDrawer({
                   ))}
                 </section>
               ))}
-            </div>
+            </section>
           )}
         </div>
       </aside>

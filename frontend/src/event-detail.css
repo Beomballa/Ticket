@@ -1,0 +1,31 @@
+/* 메인의 공통 토큰을 사용하는 상세 화면. 다른 Drawer에는 적용하지 않는다. */
+.event-drawer .event-detail-intro { gap: var(--space-panel); align-items: center; }
+.event-drawer .detail-poster { width: 120px; }
+.event-drawer .event-detail-intro h2 { margin: var(--space-field) 0 var(--space-group); }
+.event-sale-dates { display: grid; gap: var(--space-field); margin: var(--space-panel) 0 0; padding: var(--space-group); background: var(--surface-subtle); border-radius: var(--control-radius); font-size: 13px; line-height: 1.6; }
+.event-sale-dates > div { display: grid; grid-template-columns: 64px minmax(0, 1fr); gap: var(--space-group); }
+.event-sale-dates dt { color: var(--muted); }
+.event-sale-dates dd { margin: 0; overflow-wrap: anywhere; }
+.event-description { margin-top: var(--space-panel); }
+.event-description h3 { margin: 0 0 var(--space-field); font-size: 16px; }
+.event-description p { margin: 0; color: var(--muted); font-size: 14px; line-height: 1.75; overflow-wrap: anywhere; }
+.event-drawer .session-list { margin-top: 40px; padding-top: var(--space-panel); border-top: 1px solid var(--line); }
+.event-drawer .session-picker { gap: var(--space-field); }
+.event-drawer .session-picker select { font-size: 16px; }
+.event-drawer .session-title { padding: var(--space-group); }
+.event-drawer .stock-row { padding: var(--space-group); gap: var(--space-group); }
+.event-drawer .stock-row strong { display: block; font-size: 14px; line-height: 1.5; }
+.event-drawer .stock-row p { line-height: 1.6; }
+
+@media (max-width: 680px) {
+  .event-drawer .drawer-body { padding: var(--space-panel) 20px; }
+  .event-drawer .event-detail-intro { gap: var(--space-group); }
+  .event-drawer .detail-poster { width: 96px; }
+  .event-drawer .session-list { margin-top: 32px; }
+}
+
+@media (max-width: 360px) {
+  .event-drawer .detail-poster { width: 80px; }
+  .event-drawer .stock-row { flex-direction: column; align-items: stretch; gap: 12px; }
+  .event-drawer .stock-row .button { width: 100%; }
+}
